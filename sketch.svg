@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+<defs>
+  <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#0c1423"/><stop offset="1" stop-color="#18283a"/></linearGradient>
+  <linearGradient id="lane" x2="0" y2="1"><stop stop-color="#d0a76e"/><stop offset="1" stop-color="#8a542c"/></linearGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect width="1200" height="760" fill="url(#bg)"/>
+<text x="54" y="64" fill="#f3f5f7" font-family="Segoe UI,Arial" font-size="30" font-weight="700">3D BOWLING GAME</text>
+<text x="56" y="94" fill="#9fb1c6" font-family="Segoe UI,Arial" font-size="15">Scene sketch · proposal essentials with the three selected additions</text>
+<!-- lane isometric plane -->
+<polygon points="330,185 760,185 1000,630 100,630" fill="url(#lane)" stroke="#eed5ad" stroke-width="3"/>
+<polygon points="330,185 760,185 790,240 300,240" fill="#eed9b5" opacity=".38"/>
+<!-- lane guide lines -->
+<g stroke="#f5dfba" stroke-width="2" opacity=".52">
+ <line x1="390" y1="185" x2="290" y2="630"/><line x1="465" y1="185" x2="410" y2="630"/>
+ <line x1="540" y1="185" x2="530" y2="630"/><line x1="615" y1="185" x2="650" y2="630"/><line x1="690" y1="185" x2="770" y2="630"/>
+</g>
+<!-- pins -->
+<g fill="#f5f3e9" stroke="#9d342d" stroke-width="5">
+ <path d="M530 222 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/>
+ <path d="M502 241 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M558 241 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/>
+ <path d="M474 261 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M530 261 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M586 261 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/>
+ <path d="M446 282 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M502 282 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M558 282 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/><path d="M614 282 q-9 5-7 17 l5 15 h18 l5-15 q2-12-7-17 q-7-5-14 0z"/>
+</g>
+<!-- ball and predicted path -->
+<path d="M555 565 C550 520 580 465 548 420 C520 370 550 330 536 300" fill="none" stroke="#50e4cb" stroke-width="5" stroke-dasharray="9 11" filter="url(#glow)"/>
+<circle cx="555" cy="567" r="24" fill="#235ac3" stroke="#8bb5ff" stroke-width="4"/>
+<text x="566" y="530" fill="#b8fff2" font-family="Segoe UI,Arial" font-size="15">PREDICTED PATH</text>
+<!-- aiming arrow -->
+<line x1="555" y1="567" x2="610" y2="525" stroke="#f8d66d" stroke-width="4" marker-end="url(#arrow)"/>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="#f8d66d" stroke-width="2"/></marker></defs>
+<!-- HUD -->
+<rect x="44" y="128" width="275" height="142" rx="12" fill="#111d2b" stroke="#38516b"/>
+<text x="64" y="160" fill="#64ead1" font-family="Segoe UI,Arial" font-size="16" font-weight="700">AIM / POWER</text>
+<text x="64" y="190" fill="#e5edf5" font-family="Segoe UI,Arial" font-size="15">Direction   ◀  +12°  ▶</text>
+<text x="64" y="218" fill="#e5edf5" font-family="Segoe UI,Arial" font-size="15">Power      ▰▰▰▰▱  8.0</text>
+<text x="64" y="247" fill="#a8b8ca" font-family="Segoe UI,Arial" font-size="13">A/D position · drag and release to throw</text>
+<rect x="878" y="126" width="278" height="168" rx="12" fill="#111d2b" stroke="#38516b"/>
+<text x="900" y="160" fill="#64ead1" font-family="Segoe UI,Arial" font-size="16" font-weight="700">SCORECARD</text>
+<text x="900" y="190" fill="#e5edf5" font-family="Segoe UI,Arial" font-size="14">FRAME    1     2     3     4</text>
+<text x="900" y="220" fill="#e5edf5" font-family="Segoe UI,Arial" font-size="14">ROLL 1   -     -     -     -</text>
+<text x="900" y="248" fill="#e5edf5" font-family="Segoe UI,Arial" font-size="14">ROLL 2   -     -     -     -</text>
+<text x="900" y="276" fill="#9fb1c6" font-family="Segoe UI,Arial" font-size="13">HUD placeholder</text>
+<!-- camera markers -->
+<g fill="#f6d574" stroke="#132130" stroke-width="3"><path d="M218 395 l23-13 23 13v27h-46z"/><circle cx="241" cy="388" r="10"/><path d="M920 430 l23-13 23 13v27h-46z"/><circle cx="943" cy="423" r="10"/></g>
+<path d="M254 393 Q400 330 530 310 M920 435 Q760 355 560 315" fill="none" stroke="#f6d574" stroke-width="2" stroke-dasharray="6 7"/>
+<text x="110" y="454" fill="#f8dd8b" font-family="Segoe UI,Arial" font-size="14">FOLLOW CAMERA</text>
+<text x="925" y="480" fill="#f8dd8b" font-family="Segoe UI,Arial" font-size="14">RESULT VIEW</text>
+<rect x="45" y="668" width="1110" height="55" rx="10" fill="#111d2b" stroke="#38516b"/>
+<text x="72" y="702" fill="#dce6ef" font-family="Segoe UI,Arial" font-size="15">Flow: Choose position + preview → drag/release → keep standing pins for throw 2 → reset pins → next frame</text>
+</svg>

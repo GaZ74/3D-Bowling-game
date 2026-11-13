@@ -1,0 +1,24 @@
+WINDOW_WIDTH = 1100
+WINDOW_HEIGHT = 720
+WINDOW_TITLE = "3D Bowling Game"
+
+# Scene coordinates: X is lane width, Y is height, and Z runs toward the pins.
+LANE_HALF_WIDTH = 1.25
+LANE_START_Z = -5.0
+PIN_DECK_Z = 3.6
+BALL_START_Z = -4.0
+BALL_RADIUS = 0.22
+PIN_SPACING = 0.48
+PIN_ROWS = 4
+
+FPS = 60
+BALL_SPEED_MIN = 5.0
+BALL_SPEED_MAX = 12.0
+BALL_SPEED_DEFAULT = 8.0
+BALL_SPEED_STEP = 0.5
+MAX_AIM_ANGLE = 0.65  # radians
+MAX_START_X = 0.65
+START_X_STEP = 0.12
+MAX_BALL_TIME = 2.2
+
+CAMERA_MODES = ("follow", "fixed", "result")
