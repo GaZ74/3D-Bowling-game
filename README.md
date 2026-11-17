@@ -20,16 +20,6 @@ You can also run `setup_venv.bat` from Command Prompt or `setup_venv.ps1` from P
 
 Controls: Left/Right arrows aim, Up/Down arrows change power, A/D choose a starting position, Space throws, C changes camera mode, and R resets the frame. Or click and drag horizontally to set aim, drag upward/downward to adjust power, then release to throw.
 
-## Files
-
-- `main.py`: window, callbacks, and application loop.
-- `game.py`: game phases, throw flow, and pin reset timing.
-- `physics.py`: simple ball motion, trajectory prediction, and starter pin-hit response.
-- `camera.py`: fixed, follow, and result camera modes with smooth interpolation.
-- `renderer.py`: OpenGL scene drawing for lane, ball, pins, preview path, and HUD.
-- `shaders/lane.vert` and `shaders/lane.frag`: GLSL 1.20 procedural wood lane material; a plain material fallback is used if shader compilation fails.
-- `scoring.py`: scoring interface for completing the standard frame/strike/spare logic.
-- `config.py`: shared scene and window constants.
-- `sketch.svg`: visual scene sketch and feature callouts.
-
-This is an intentionally small scaffold. Collision response and official ten-pin scoring are marked as extension points; they are not full simulations yet. The mouse gesture is a simple input shortcut rather than a character animation.
+#Alpha test issue:
+Game executed successfully but having performance issue
+Collision physics still in development
