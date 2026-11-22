@@ -32,10 +32,11 @@ class Model:
             self.parts.append(
                 (vertices, mesh.faces, mesh.face_normals)
             )
+        # Compile static geometry once after the window has created an
+        # OpenGL context. The pin model is reused ten times per frame.
+        self._display_list = 0
 
-    def draw(self, color):
-        glColor3f(*color)
-
+    def _draw_geometry(self):
         for vertices, faces, face_normals in self.parts:
             glBegin(GL_TRIANGLES)
             for face, normal in zip(faces, face_normals):
@@ -43,3 +44,23 @@ class Model:
                 for index in face:
                     glVertex3fv(vertices[index])
             glEnd()
+
+    def _compile_display_list(self):
+        display_list = glGenLists(1)
+        if not display_list:
+            return False
+        glNewList(display_list, GL_COMPILE)
+        self._draw_geometry()
+        glEndList()
+        self._display_list = display_list
+        return True
+
+    def draw(self, color):
+        glColor3f(*color)
+        if not self._display_list:
+            self._compile_display_list()
+        if self._display_list:
+            glCallList(self._display_list)
+        else:
+            # Compatibility fallback for a driver without display lists.
+            self._draw_geometry()

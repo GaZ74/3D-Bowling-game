@@ -1,13 +1,13 @@
 """Game state and two-roll frame flow."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 from config import (BALL_RADIUS, BALL_START_Z, BALL_SPEED_DEFAULT,
                     BALL_SPEED_MAX, BALL_SPEED_MIN, BALL_SPEED_STEP,
                     MAX_AIM_ANGLE, MAX_START_X, START_X_STEP, PIN_DECK_Z,
-                    PIN_SPACING, PIN_ROWS)
-from physics import advance_ball, apply_starter_pin_hits, predict_trajectory
+                    PIN_SPACING, PIN_ROWS, PHYSICS_HZ, MAX_PHYSICS_STEPS)
+from physics import predict_trajectory, step_physics
 from scoring import Scorecard
 
 
@@ -17,6 +17,12 @@ class Ball:
     z: float = BALL_START_Z
     vx: float = 0.0
     vz: float = 0.0
+    on_guide: bool = False
+    guide_side: int = 0
+    guide_points: list = field(default_factory=list)
+    guide_lengths: list = field(default_factory=list)
+    guide_distance: float = 0.0
+    reached_reset: bool = False
 
 
 @dataclass
@@ -24,6 +30,13 @@ class Pin:
     x: float
     z: float
     down: bool = False
+    vx: float = 0.0
+    vz: float = 0.0
+    tilt_x: float = 0.0
+    tilt_z: float = 0.0
+    omega_x: float = 0.0
+    omega_z: float = 0.0
+    ball_contacted: bool = False
 
 
 class BowlingGame:
@@ -37,6 +50,8 @@ class BowlingGame:
         self.rolls_this_frame = 0
         self.message = "Aim with arrows, set power, then press Space"
         self.scorecard = Scorecard()
+        self._physics_accumulator = 0.0
+        self._physics_step = 1.0 / PHYSICS_HZ
 
     @staticmethod
     def _make_pins():
@@ -52,6 +67,12 @@ class BowlingGame:
     @property
     def standing_pins(self):
         return sum(not pin.down for pin in self.pins)
+
+    @property
+    def pins_moving(self):
+        return any(math.hypot(pin.vx, pin.vz) > 0.04
+                   or math.hypot(pin.omega_x, pin.omega_z) > 0.04
+                   for pin in self.pins)
 
     def trajectory(self):
         return predict_trajectory(self.aim, self.power, self.start_x)
@@ -74,23 +95,39 @@ class BowlingGame:
     def throw(self):
         if self.phase != "aiming":
             return
+        for pin in self.pins:
+            pin.ball_contacted = False
         self.ball = Ball(x=self.start_x, vx=math.sin(self.aim) * self.power,
                          vz=math.cos(self.aim) * self.power)
         self.phase = "rolling"
         self.message = "Ball in motion"
 
     def update(self, dt: float):
-        if self.phase != "rolling":
+        if self.phase not in ("rolling", "result"):
             return
-        apply_starter_pin_hits(self.ball, self.pins)
-        if advance_ball(self.ball, dt) or self.ball.z > PIN_DECK_Z + 1.2:
-            apply_starter_pin_hits(self.ball, self.pins)
-            self.rolls_this_frame += 1
-            self.phase = "result"
-            self.message = f"{10 - self.standing_pins} pin(s) down - press Space for next roll"
+        self._physics_accumulator += min(max(dt, 0.0), 0.1)
+        steps = 0
+        while self._physics_accumulator >= self._physics_step and steps < MAX_PHYSICS_STEPS:
+            finished = step_physics(self.ball, self.pins, self._physics_step)
+            self._physics_accumulator -= self._physics_step
+            steps += 1
+            if self.phase == "rolling" and finished:
+                self.rolls_this_frame += 1
+                self.phase = "result"
+                if self.ball.on_guide:
+                    self.message = (f"Ball followed the side guide to the reset zone - "
+                                   f"{10 - self.standing_pins} pin(s) down")
+                else:
+                    self.message = f"Ball reached the reset zone - {10 - self.standing_pins} pin(s) down"
+        if (self.phase == "result" and not self.pins_moving
+                and "press Space" not in self.message):
+            self.message += " - press Space for next roll"
 
     def next_roll(self):
         if self.phase != "result":
+            return
+        if self.pins_moving:
+            self.message = "Pins are still settling"
             return
         # A strike finishes the frame immediately. Otherwise allow roll two.
         if self.rolls_this_frame >= 2 or self.standing_pins == 0:
@@ -102,6 +139,7 @@ class BowlingGame:
         self.start_x = 0.0
         self.power = BALL_SPEED_DEFAULT
         self.phase = "aiming"
+        self._physics_accumulator = 0.0
 
     def reset_frame(self):
         self.pins = self._make_pins()
@@ -112,3 +150,4 @@ class BowlingGame:
         self.power = BALL_SPEED_DEFAULT
         self.phase = "aiming"
         self.message = "Frame reset"
+        self._physics_accumulator = 0.0

@@ -1,27 +1,41 @@
 # 3D Bowling Game
 
-A small Python/PyOpenGL starter structure for the accepted Computer Graphics project proposal. It keeps the original features (lane, ten pins, aiming and throwing, simple physics, scoring, lighting, and an on-screen display) and includes trajectory prediction, a second throw with pin reset, a dynamic camera, a short pre-throw setup, a mouse release gesture, and a procedural lane shader.
+A Python/PyOpenGL ten-pin bowling prototype. The project includes separate GLB ball and pin models, trajectory preview, aiming and power controls, two-roll frames, a dynamic camera, a shader that uses the room floor texture on the lane, and curved side-guide routes into a reset area.
 
-## Run
+## Run on Windows
 
-Install Python 3.10 or newer and a GLUT/FreeGLUT runtime. On Windows, make sure the FreeGLUT DLL is available on `PATH` (or beside `python.exe`). The Python packages can then be installed in a virtual environment:
+Install Python 3.10 or newer and a GLUT/FreeGLUT runtime. FreeGLUT is a native Windows dependency and is not installed by pip; its DLL must be available on `PATH`.
 
-```bash
-py -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python main.py
+From this project folder, run `setup_venv.bat` or `setup_venv.ps1`. Then launch with:
+
+```powershell
+.\.venv\Scripts\python.exe .\main.py
 ```
 
-You can also run `setup_venv.bat` from Command Prompt or `setup_venv.ps1` from PowerShell. These scripts create `.venv` and install the Python packages. A virtual environment is created with Python's `venv` module; pip installs packages into it, rather than installing the environment itself.
+To install manually instead:
 
-`requirements.txt` contains PyOpenGL and its optional acceleration package. FreeGLUT is a native system runtime, so pip cannot install it. If the window fails to start with a GLUT/DLL error, install a Windows FreeGLUT runtime and ensure its DLL directory is on `PATH`.
+```powershell
+py -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install --upgrade pip
+& .\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
+& .\.venv\Scripts\python.exe .\main.py
+```
 
-Controls: Left/Right arrows aim, Up/Down arrows change power, A/D choose a starting position, Space throws, C changes camera mode, and R resets the frame. Or click and drag horizontally to set aim, drag upward/downward to adjust power, then release to throw.
+## Controls
 
-This is an intentionally small scaffold. Collision response and official ten-pin scoring are marked as extension points; they are not full simulations yet. The mouse gesture is a simple input shortcut rather than a character animation.
+- Left/Right arrows: aim.
+- Up/Down arrows: adjust power.
+- A/D: move the starting position.
+- Mouse drag: adjust aim and power; release to throw.
+- Space: throw or continue after the pins settle.
+- C: cycle camera mode.
+- R: reset the frame.
 
-#Alpha test issue:
-Game executed successfully but having performance issue
-Collision physics still in development
+## Physics and performance
+
+Ball and pin motion use fixed 1/120-second physics steps. Swept ball-to-pin checks reduce tunneling, pin contacts transfer motion, and damping makes pins settle. A wide shot that crosses a lane boundary follows the curved outside guide around the pin deck to the reset zone. The lane and surrounding floor sample the same `assets/floor.jpg` texture.
+
+Static GLB geometry is compiled into OpenGL display lists and reused. HUD text is also cached between changes. The HUD displays measured render FPS; the project target is 60 FPS, but the achieved rate depends on the test computer and display and still needs to be measured there.
+
+The physics are an arcade approximation, not a full rigid-body simulation. Official strike/spare scoring and the GLB models' original PBR materials are not implemented yet.
+

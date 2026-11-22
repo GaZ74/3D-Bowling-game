@@ -1,16 +1,19 @@
 """OpenGL drawing. Keep game rules out of this module."""
 
 import math
+import time
 from pathlib import Path
 from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt, gluOrtho2D
 from OpenGL.GL.shaders import compileProgram, compileShader
-from OpenGL.GLUT import (glutSolidSphere, glutSolidCone, glutBitmapCharacter,
-                         glutSwapBuffers, GLUT_BITMAP_HELVETICA_18)
+from OpenGL.GLUT import (glutBitmapCharacter, glutSwapBuffers,
+                         GLUT_BITMAP_HELVETICA_18)
 from PIL import Image
 
-from config import (BALL_RADIUS, LANE_HALF_WIDTH, LANE_START_Z, PIN_DECK_Z,
+from config import (BALL_RADIUS, LANE_BALL_CENTER_LIMIT, LANE_HALF_WIDTH,
+                    LANE_START_Z, PIN_DECK_Z, RESET_ZONE_Z,
                     WINDOW_HEIGHT, WINDOW_WIDTH)
+from physics import make_guide_curve
 
 _lane_program = None
 _shader_attempted = False
@@ -20,6 +23,12 @@ _ROOM_HALF_WIDTH = 5.5
 _ROOM_FRONT_Z = -10.0
 _ROOM_BACK_Z = 11.0
 _ROOM_HEIGHT = 8.0
+_fps_started = time.perf_counter()
+_fps_frames = 0
+_fps_value = 0.0
+_guide_rail_points = None
+_hud_text = [None, None, None, None]
+_hud_lists = [0, 0, 0, 0]
 
 
 def _get_texture(filename):
@@ -98,20 +107,30 @@ def _get_lane_program():
 
 
 def _draw_lane():
+    floor = _get_texture("floor.jpg")
     program = _get_lane_program()
     if program:
         glUseProgram(program)
-    glColor3f(1.0, 1.0, 1.0) if program else glColor3f(0.58, 0.34, 0.16)
+        sampler = glGetUniformLocation(program, "uFloorTexture")
+        if sampler >= 0:
+            glUniform1i(sampler, 0)
+    if floor:
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, floor)
+    else:
+        glDisable(GL_TEXTURE_2D)
+    glColor3f(1.0, 1.0, 1.0)
     glBegin(GL_QUADS)
     glTexCoord2f(0, 0)
     glVertex3f(-LANE_HALF_WIDTH, 0, LANE_START_Z)
-    glTexCoord2f(1, 0)
+    glTexCoord2f(2.2, 0)
     glVertex3f(LANE_HALF_WIDTH, 0, LANE_START_Z)
-    glTexCoord2f(1, 1)
+    glTexCoord2f(2.2, 5.2)
     glVertex3f(LANE_HALF_WIDTH, 0, PIN_DECK_Z + 2.0)
-    glTexCoord2f(0, 1)
+    glTexCoord2f(0, 5.2)
     glVertex3f(-LANE_HALF_WIDTH, 0, PIN_DECK_Z + 2.0)
     glEnd()
+    glDisable(GL_TEXTURE_2D)
     if program:
         glUseProgram(0)
 
@@ -141,6 +160,36 @@ def _draw_lane():
     glEnd()
 
 
+def _draw_guide_rails():
+    """Draw the dark return guides that route a wide shot around the pins."""
+    global _guide_rail_points
+    if _guide_rail_points is None:
+        _guide_rail_points = {}
+        for side in (-1, 1):
+            _guide_rail_points[side] = make_guide_curve(
+                side,
+                start_x=side * LANE_BALL_CENTER_LIMIT,
+                start_z=LANE_START_Z,
+            )[0]
+    glDisable(GL_LIGHTING)
+    glColor3f(0.035, 0.045, 0.06)
+    glLineWidth(5.0)
+    for side in (-1, 1):
+        glBegin(GL_LINE_STRIP)
+        for x, z in _guide_rail_points[side]:
+            glVertex3f(x, 0.035, z)
+        glEnd()
+    # A dark reset pocket marks where the guided ball comes to rest.
+    glBegin(GL_LINE_LOOP)
+    for index in range(48):
+        angle = 2.0 * math.pi * index / 48
+        glVertex3f(math.cos(angle) * 1.7, 0.035,
+                   RESET_ZONE_Z + math.sin(angle) * 0.34)
+    glEnd()
+    glLineWidth(1.0)
+    glEnable(GL_LIGHTING)
+
+
 def _draw_ball(ball, ball_model):
     glPushMatrix()
     glTranslatef(ball.x, BALL_RADIUS, ball.z)
@@ -151,9 +200,9 @@ def _draw_ball(ball, ball_model):
 def _draw_pins(pins, pin_model):
     for pin in pins:
         glPushMatrix()
-        glTranslatef(pin.x, 0.16 if pin.down else 0.3, pin.z)
-        if pin.down:
-            glRotatef(80, 1, 0, 0)
+        glTranslatef(pin.x, 0.0, pin.z)
+        glRotatef(math.degrees(pin.tilt_z), 0, 0, 1)
+        glRotatef(math.degrees(pin.tilt_x), 1, 0, 0)
         pin_model.draw((0.92, 0.91, 0.84))
         glPopMatrix()
 
@@ -171,7 +220,19 @@ def _draw_trajectory(points):
     glEnable(GL_LIGHTING)
 
 
-def _draw_hud(game, camera):
+def _measure_fps():
+    global _fps_started, _fps_frames, _fps_value
+    _fps_frames += 1
+    now = time.perf_counter()
+    elapsed = now - _fps_started
+    if elapsed >= 0.5:
+        _fps_value = _fps_frames / elapsed
+        _fps_frames = 0
+        _fps_started = now
+    return _fps_value
+
+
+def _draw_hud(game, camera, fps):
     glMatrixMode(GL_PROJECTION)
     glPushMatrix()
     glLoadIdentity()
@@ -181,13 +242,30 @@ def _draw_hud(game, camera):
     glLoadIdentity()
     glDisable(GL_LIGHTING)
     glColor3f(1, 1, 1)
-    lines = [game.message, f"Aim {math.degrees(game.aim):.0f} deg | Power {game.power:.1f} | Start {game.start_x:+.2f}",
+    state = "Guide to reset" if game.ball.on_guide else game.phase.title()
+    lines = [f"FPS {fps:.1f} | State {state} | Aim {math.degrees(game.aim):.0f} deg | Power {game.power:.1f}",
+             game.message,
              f"Standing pins {game.standing_pins}/10 | Camera {camera.mode}",
-             "Mouse drag/release throw | A/D position | arrows aim/power | Space throw | C camera | R reset"]
+             f"Start {game.start_x:+.2f} | Mouse drag/release | A/D position | arrows aim/power | Space throw | C camera | R reset"]
     for row, line in enumerate(lines):
+        if line != _hud_text[row]:
+            if _hud_lists[row]:
+                glDeleteLists(_hud_lists[row], 1)
+                _hud_lists[row] = 0
+            _hud_text[row] = line
+            new_list = glGenLists(1)
+            if new_list:
+                glNewList(new_list, GL_COMPILE)
+                for char in line:
+                    glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(char))
+                glEndList()
+                _hud_lists[row] = new_list
         glRasterPos2i(24, WINDOW_HEIGHT - 34 - row * 26)
-        for char in line:
-            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(char))
+        if _hud_lists[row]:
+            glCallList(_hud_lists[row])
+        else:
+            for char in line:
+                glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(char))
     glEnable(GL_LIGHTING)
     glPopMatrix()
     glMatrixMode(GL_PROJECTION)
@@ -196,15 +274,17 @@ def _draw_hud(game, camera):
 
 
 def draw_scene(game, camera, ball_model, pin_model):
+    fps = _measure_fps()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
     gluLookAt(*camera.position, *camera.target, 0, 1, 0)
     _draw_room()
     _draw_lane()
+    _draw_guide_rails()
     _draw_pins(game.pins, pin_model)
     _draw_ball(game.ball, ball_model)
     if game.phase == "aiming":
         _draw_trajectory(game.trajectory())
-    _draw_hud(game, camera)
+    _draw_hud(game, camera, fps)
     glutSwapBuffers()
