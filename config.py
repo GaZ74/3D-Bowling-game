@@ -12,6 +12,13 @@ PIN_SPACING = 0.48
 PIN_ROWS = 4
 PIN_RADIUS = 0.11
 
+# Pins crossing these playable-area bounds count as fallen. The lateral limit
+# includes one pin radius beyond the lane edge; the far limit follows the
+# physical lane end/reset line rather than the curved ball-return guide.
+PIN_FALL_X_LIMIT = LANE_HALF_WIDTH + PIN_RADIUS
+PIN_FALL_MIN_Z = LANE_START_Z - PIN_RADIUS
+PIN_FALL_MAX_Z = PIN_DECK_Z + 2.0 + PIN_RADIUS
+
 # Fixed-step motion keeps collisions stable even if rendering slows briefly.
 PHYSICS_HZ = 120
 MAX_PHYSICS_STEPS = 12
@@ -46,4 +53,4 @@ MAX_START_X = 0.65
 START_X_STEP = 0.12
 MAX_BALL_TIME = 2.2
 
-CAMERA_MODES = ("follow", "fixed", "result")
+CAMERA_MODES = ("follow", "fixed", "result", "scoreboard")

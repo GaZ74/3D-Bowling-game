@@ -1,26 +1,39 @@
 # Changelog
 
-## Physics and performance update
+## [0.1.0-alpha] - 2026-11-24
+
+First complete alpha build of the 3D Bowling Game prototype.
 
 ### Added
 
-- Fixed-step physics updates to make ball and pin movement less dependent on frame rate.
-- Ball-to-pin collision detection that checks the ball's movement between physics steps.
-- Pin movement, tipping, damping, settling, and pin-to-pin collision response.
-- A visible FPS readout in the game HUD.
-- Cached static model geometry and HUD text to reduce repeated drawing work.
-- Dark side guide rails with a curved path that routes wide shots around the pin deck and into the reset area.
-- A reset pocket at the end of the guide path.
+- Title menu for Single Player and Local 2 Players, with keyboard selection and quick-start keys.
+- Separate ten-frame scorecards for each player. Local players alternate completed frames for 20 frame-turns.
+- Open-frame, spare, and strike scoring, including strike/spare bonuses and tenth-frame fill balls.
+- Turkey notification and the in-game Gobble Gobble achievement after three consecutive strikes.
+- Perfect-game recognition for a 300-point game.
+- Physical overhead score board with one score row in single-player mode and two rows in local multiplayer. Frame columns read left to right; both rolls and the cumulative score appear in the same frame cell.
+- Fixed-step ball and pin physics, swept ball-to-pin contact, pin-to-pin motion transfer, pin settling, and configurable out-of-bounds pin limits.
+- Curved ball-return guides that route wide shots around the pin deck to the reset zone.
+- Follow, fixed, result, and score-board camera views. Right-click drag looks around from follow view; left-click drag controls aim and power.
+- FPS and gameplay status HUD.
+- Ceiling light fixtures, room lighting, floor contact-shadow approximations, lane target arrows, approach markers, neon wall trim, back-wall plaques, and a ball-return rack.
+- Shared floor texture for the room and lane, GLB ball and pin models, and cached static model/HUD drawing.
 
 ### Changed
 
-- The bowling lane now uses the same `floor.jpg` texture as the room floor.
-- The game update loop advances physics in fixed-size steps and limits catch-up work per frame.
-- Dependency declarations now include PyOpenGL, Pillow, NumPy, and trimesh.
-- README setup and gameplay notes now describe the physics update and controls.
+- Left/Right aiming, A/D ball placement, and menu Up/Down now follow screen directions.
+- The fixed overview camera sits below the hanging score board's sightline.
+- `R` resets the current game and scorecards; `Esc` returns to the title menu.
 
-### Notes
+### Known limitations
 
-- Python syntax and basic center-strike and wide-shot simulations were checked.
-- The 60 FPS target has not yet been measured on the target computer. Use the HUD readout during gameplay to check performance.
-- Pin and ball motion use simplified arcade-style physics; official bowling scoring remains out of scope for this update.
+- Pin and ball motion use simplified arcade physics rather than a full rigid-body simulation.
+- Floor shadows are contact-shadow approximations; full shadow mapping and shadows cast onto other objects are not implemented.
+- The Gobble Gobble achievement is tracked in-game and is not connected to an external trophy platform.
+- The project targets 60 FPS, but performance has not been formally measured across the intended test hardware.
+- Original PBR materials from the GLB assets are not implemented.
+
+### Verification
+
+- Python syntax compilation passed for all 8 Python modules.
+- Interactive gameplay, scoring scenarios, and final visual presentation still need a full alpha play-through.

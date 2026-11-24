@@ -26,6 +26,7 @@ last_time = time.perf_counter()
 drag_origin = None
 drag_aim = 0.0
 drag_power = 0.0
+dragging_look = False
 
 
 def display():
@@ -44,10 +45,16 @@ def update(_value=0):
 
 
 def special_key(key, _x, _y):
+    if game.phase == "menu":
+        if key == GLUT_KEY_UP:
+            game.move_menu_selection(-1)
+        elif key == GLUT_KEY_DOWN:
+            game.move_menu_selection(1)
+        return
     if key == GLUT_KEY_LEFT:
-        game.change_aim(-1)
-    elif key == GLUT_KEY_RIGHT:
         game.change_aim(1)
+    elif key == GLUT_KEY_RIGHT:
+        game.change_aim(-1)
     elif key == GLUT_KEY_UP:
         game.change_power(1)
     elif key == GLUT_KEY_DOWN:
@@ -56,6 +63,19 @@ def special_key(key, _x, _y):
 
 def keyboard(key, _x, _y):
     key = key.decode("utf-8").lower()
+    if game.phase == "menu":
+        if key in ("\r", "\n"):
+            game.start_game(game.menu_selection)
+        elif key == "1":
+            game.start_game(1)
+        elif key == "2":
+            game.start_game(2)
+        elif key == "\x1b":
+            return
+        return
+    if key == "\x1b":
+        game.return_to_menu()
+        return
     if key == " " and game.phase == "aiming":
         game.throw()
     elif key == " " and game.phase == "result":
@@ -65,30 +85,49 @@ def keyboard(key, _x, _y):
     elif key == "r":
         game.reset_frame()
     elif key == "a":
-        game.change_start_position(-1)
-    elif key == "d":
         game.change_start_position(1)
+    elif key == "d":
+        game.change_start_position(-1)
 
 
 def mouse(button, state, x, y):
-    global drag_origin, drag_aim, drag_power
-    if button != GLUT_LEFT_BUTTON:
-        return
-    if state == GLUT_DOWN and game.phase == "aiming":
+    global drag_origin, drag_aim, drag_power, dragging_look
+    if button == GLUT_RIGHT_BUTTON and state == GLUT_DOWN and camera.mode == "follow":
+        drag_origin = (x, y)
+        dragging_look = True
+        camera.begin_look()
+    elif button == GLUT_RIGHT_BUTTON and state == GLUT_UP:
+        dragging_look = False
+        camera.end_look()
+        drag_origin = None
+    elif button == GLUT_LEFT_BUTTON and state == GLUT_DOWN and game.phase == "aiming":
+        dragging_look = False
+        camera.end_look()
         drag_origin = (x, y)
         drag_aim = game.aim
         drag_power = game.power
-    elif state == GLUT_UP and drag_origin is not None:
+    elif button == GLUT_LEFT_BUTTON and state == GLUT_UP and drag_origin is not None:
+        was_looking = dragging_look
         drag_origin = None
-        game.throw()
+        if not was_looking:
+            game.throw()
 
 
 def mouse_motion(x, y):
-    if drag_origin is None or game.phase != "aiming":
+    global drag_origin
+    if drag_origin is None:
+        return
+    if dragging_look:
+        dx = x - drag_origin[0]
+        dy = y - drag_origin[1]
+        camera.look(dx, dy)
+        drag_origin = (x, y)
+        return
+    if game.phase != "aiming":
         return
     dx = x - drag_origin[0]
     dy = drag_origin[1] - y
-    game.aim = max(-MAX_AIM_ANGLE, min(MAX_AIM_ANGLE, drag_aim + dx * 0.003))
+    game.aim = max(-MAX_AIM_ANGLE, min(MAX_AIM_ANGLE, drag_aim - dx * 0.003))
     game.power = max(BALL_SPEED_MIN, min(BALL_SPEED_MAX, drag_power + dy * 0.025))
 
 
@@ -109,11 +148,22 @@ def main():
     glClearColor(0.055, 0.07, 0.11, 1.0)
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_LIGHTING)
-    glEnable(GL_LIGHT0)
-    glLightfv(GL_LIGHT0, GL_POSITION, (0.0, 8.0, -1.0, 1.0))
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 0.96, 0.86, 1.0))
+    light_positions = [(-2.5, 5.35, -4.0, 1.0),
+                       (2.5, 5.35, -0.5, 1.0),
+                       (-2.5, 5.35, 4.0, 1.0),
+                       (2.5, 5.35, 7.0, 1.0)]
+    for index, position in enumerate(light_positions):
+        light = GL_LIGHT0 + index
+        glEnable(light)
+        glLightfv(light, GL_POSITION, position)
+        glLightfv(light, GL_DIFFUSE, (0.95, 0.91, 0.78, 1.0))
+        glLightfv(light, GL_AMBIENT, (0.12, 0.12, 0.12, 1.0))
+        glLightf(light, GL_CONSTANT_ATTENUATION, 0.8)
+        glLightf(light, GL_LINEAR_ATTENUATION, 0.025)
     glEnable(GL_COLOR_MATERIAL)
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.28, 0.28, 0.28, 1.0))
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 28.0)
     glutDisplayFunc(display)
     glutReshapeFunc(reshape)
     glutSpecialFunc(special_key)

@@ -16,6 +16,9 @@ from config import (
     LANE_BALL_CENTER_LIMIT,
     PIN_ANGULAR_DAMPING,
     PIN_FALL_ANGLE,
+    PIN_FALL_MAX_Z,
+    PIN_FALL_MIN_Z,
+    PIN_FALL_X_LIMIT,
     PIN_LINEAR_DAMPING,
     PIN_MAX_TILT,
     PIN_PIN_RESTITUTION,
@@ -181,7 +184,15 @@ def _resolve_pin_pairs(pins):
             b = pins[j]
             dx, dz = b.x - a.x, b.z - a.z
             distance = math.hypot(dx, dz)
-            min_distance = PIN_RADIUS * (2.0 if not (a.down or b.down) else 2.4)
+            # The pin model is tall but this arcade physics keeps pin origins
+            # on the floor. Give a tipping pin a wider contact footprint so
+            # its falling body can hit its neighbors in the top-down solver.
+            if a.down and b.down:
+                min_distance = PIN_RADIUS * 5.0
+            elif a.down or b.down:
+                min_distance = PIN_RADIUS * 4.0
+            else:
+                min_distance = PIN_RADIUS * 2.0
             if distance >= min_distance:
                 continue
             if distance <= 1e-8:
@@ -240,11 +251,35 @@ def _step_pins(pins, dt):
             pin.tilt_x = pin.tilt_z = 0.0
 
 
+def _mark_out_of_bounds_pins(pins):
+    """Count pins outside the lane/reset-line bounds as fallen, and lay them over."""
+    for pin in pins:
+        if pin.down:
+            continue
+        if pin.x > PIN_FALL_X_LIMIT:
+            pin.down = True
+            pin.tilt_z = -PIN_MAX_TILT  # top points outside the right rail
+        elif pin.x < -PIN_FALL_X_LIMIT:
+            pin.down = True
+            pin.tilt_z = PIN_MAX_TILT   # top points outside the left rail
+        elif pin.z > PIN_FALL_MAX_Z:
+            pin.down = True
+            pin.tilt_x = PIN_MAX_TILT   # top passes the far reset line
+        elif pin.z < PIN_FALL_MIN_Z:
+            pin.down = True
+            pin.tilt_x = -PIN_MAX_TILT  # top passes the foul-line side
+        if pin.down:
+            pin.omega_x = pin.omega_z = 0.0
+            pin.vx *= 0.35
+            pin.vz *= 0.35
+
+
 def step_physics(ball, pins, dt):
     """Advance one small physics step; return True when the ball reaches reset."""
     if ball.reached_reset:
         _step_pins(pins, dt)
         _resolve_pin_pairs(pins)
+        _mark_out_of_bounds_pins(pins)
         return True
 
     if ball.on_guide:
@@ -274,4 +309,5 @@ def step_physics(ball, pins, dt):
 
     _step_pins(pins, dt)
     _resolve_pin_pairs(pins)
+    _mark_out_of_bounds_pins(pins)
     return ball.reached_reset
