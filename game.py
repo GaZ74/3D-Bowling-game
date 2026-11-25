@@ -6,7 +6,7 @@ import math
 from config import (BALL_RADIUS, BALL_START_Z, BALL_SPEED_DEFAULT,
                     BALL_SPEED_MAX, BALL_SPEED_MIN, BALL_SPEED_STEP,
                     MAX_AIM_ANGLE, MAX_START_X, START_X_STEP, PIN_DECK_Z,
-                    PIN_SPACING, PIN_ROWS, PHYSICS_HZ, MAX_PHYSICS_STEPS)
+                    PIN_SPACING, PIN_ROW_DEPTH, PIN_ROWS, PHYSICS_HZ, MAX_PHYSICS_STEPS)
 from physics import predict_trajectory, step_physics
 from scoring import Scorecard
 
@@ -37,6 +37,10 @@ class Pin:
     omega_x: float = 0.0
     omega_z: float = 0.0
     ball_contacted: bool = False
+    pin_id: int = 0
+    home_x: float | None = None
+    home_z: float | None = None
+    cleared: bool = False
 
 
 class BowlingGame:
@@ -67,13 +71,28 @@ class BowlingGame:
     @staticmethod
     def _make_pins():
         pins = []
+        pin_id = 1
         for row in range(PIN_ROWS):
             count = row + 1
-            z = PIN_DECK_Z + (PIN_ROWS - 1 - row) * PIN_SPACING
+            z = PIN_DECK_Z + row * PIN_ROW_DEPTH
             for col in range(count):
                 x = (col - (count - 1) / 2) * PIN_SPACING
-                pins.append(Pin(x, z))
+                pins.append(Pin(x, z, pin_id=pin_id, home_x=x, home_z=z))
+                pin_id += 1
         return pins
+
+    def _reset_standing_pins(self):
+        """Sweep fallen pins and restore each standing pin to its home spot."""
+        for pin in self.pins:
+            if pin.down:
+                pin.cleared = True
+                continue
+            pin.x = pin.home_x if pin.home_x is not None else pin.x
+            pin.z = pin.home_z if pin.home_z is not None else pin.z
+            pin.vx = pin.vz = 0.0
+            pin.tilt_x = pin.tilt_z = 0.0
+            pin.omega_x = pin.omega_z = 0.0
+            pin.ball_contacted = False
 
     @property
     def standing_pins(self):
@@ -215,9 +234,13 @@ class BowlingGame:
             else:
                 self.message = f"Frame {min(active_card.current_frame + 1, 10)} - pins reset"
         elif card.reset_rack_after_roll:
-            # Bonus balls in the tenth frame receive a fresh rack when earned.
+            # Tenth-frame bonus balls receive a fresh rack when earned.
             self.pins = self._make_pins()
             self.rolls_this_frame = len(card.frames[card.current_frame])
+        else:
+            # The second ball gets only the pins that remained standing.
+            self._reset_standing_pins()
+            self.message = "Standing pins reset for the second throw"
         self.ball = Ball()
         self.aim = 0.0
         self.start_x = 0.0
@@ -244,3 +267,5 @@ class BowlingGame:
         self.phase = "aiming"
         self.message = "Game reset"
         self._physics_accumulator = 0.0
+
+

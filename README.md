@@ -2,7 +2,7 @@
 
 A Python/PyOpenGL ten-pin bowling prototype. The project includes separate GLB ball and pin models, trajectory preview, aiming and power controls, ten-frame scoring with strike/spare bonuses and tenth-frame fill balls, a dynamic camera, a shader that uses the room floor texture on the lane, and curved side-guide routes into a reset area.
 
-The alley scene includes ceiling light fixtures, neon wall trim, lane target arrows and approach markers, a ball-return rack, floor contact shadows, and a ceiling-suspended physical score panel above the lane approach. A title menu lets players choose single-player or local two-player mode. The score board shows one row in single-player mode and two rows in local mode. In local mode, P1 and P2 alternate completed frames for 20 frame-turns. Three consecutive strikes unlock the in-game Gobble Gobble achievement, and a 300 game is recognized as a perfect game. The in-game HUD now uses a compact status panel for turn, score, controls, and camera information.
+The project uses `assets/bowling_club.glb` for the alley, lanes, approach, ball returns, displays, and room decoration. Its orientation and original scale are mapped to the gameplay coordinates; the static pin meshes are replaced by the physics-driven pin rack at the same position. The procedural room remains available by setting `USE_CLUB_ROOM_MODEL = False` in `config.py`. The GLB loader preserves base-color materials and embedded textures. A title menu lets players choose single-player or local two-player mode. The live pinfall score board is fitted onto the model’s center monitor, with one row in single-player mode and two rows in local mode. In local mode, P1 and P2 alternate completed frames for 20 frame-turns. Three consecutive strikes unlock the in-game Gobble Gobble achievement, and a 300 game is recognized as a perfect game. The HUD also shows the current turn, score, controls, and camera information.
 
 ## Run on Windows
 
@@ -42,5 +42,5 @@ Ball and pin motion use fixed 1/120-second physics steps. Swept ball-to-pin chec
 
 Static GLB geometry is compiled into OpenGL display lists and reused. HUD text is also cached between changes. The HUD displays measured render FPS; the project target is 60 FPS, but the achieved rate depends on the test computer and display and still needs to be measured there.
 
-The physics are an arcade approximation, not a full rigid-body simulation. The floor shadows are soft contact-shadow approximations; full shadow mapping is not implemented. The GLB models' original PBR materials are not implemented yet.
+The physics are an arcade approximation, not a full rigid-body simulation. The floor shadows are contact-shadow approximations; full shadow mapping is not implemented. Room rendering supports base-color textures and factors, but does not reproduce advanced PBR channels.
 

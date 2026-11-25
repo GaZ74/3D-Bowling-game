@@ -9,7 +9,7 @@ from OpenGL.GLUT import *
 
 from camera import Camera
 from config import (BALL_SPEED_MAX, BALL_SPEED_MIN, MAX_AIM_ANGLE, WINDOW_HEIGHT,
-                    WINDOW_TITLE, WINDOW_WIDTH)
+                    USE_CLUB_ROOM_MODEL, WINDOW_TITLE, WINDOW_WIDTH)
 from game import BowlingGame
 from renderer import draw_scene
 
@@ -19,6 +19,14 @@ ASSETS = Path(__file__).parent / "assets"
 
 ball_model = Model(ASSETS / "bowling_ball.glb", target_size=0.44)
 pin_model = Model(ASSETS / "bowling_pin.glb", target_size=0.52, anchor="bottom")
+room_model = None
+if USE_CLUB_ROOM_MODEL:
+    try:
+        room_model = Model(ASSETS / "bowling_club.glb", target_size=1.0,
+                                                    use_materials=True,
+                           exclude_name_tokens=("Bowling_pin",))
+    except Exception as exc:
+        print(f"Club room model unavailable; using procedural room: {exc}")
 
 game = BowlingGame()
 camera = Camera()
@@ -30,7 +38,7 @@ dragging_look = False
 
 
 def display():
-    draw_scene(game, camera, ball_model, pin_model)
+    draw_scene(game, camera, ball_model, pin_model, room_model)
 
 
 def update(_value=0):
@@ -147,11 +155,12 @@ def main():
     glutCreateWindow(WINDOW_TITLE.encode("utf-8"))
     glClearColor(0.055, 0.07, 0.11, 1.0)
     glEnable(GL_DEPTH_TEST)
+    glEnable(GL_NORMALIZE)
     glEnable(GL_LIGHTING)
-    light_positions = [(-2.5, 5.35, -4.0, 1.0),
-                       (2.5, 5.35, -0.5, 1.0),
-                       (-2.5, 5.35, 4.0, 1.0),
-                       (2.5, 5.35, 7.0, 1.0)]
+    light_positions = [(-3.2, 3.35, -8.0, 1.0),
+                       (3.2, 3.35, 1.0, 1.0),
+                       (-3.2, 3.35, 11.0, 1.0),
+                       (3.2, 3.35, 21.0, 1.0)]
     for index, position in enumerate(light_positions):
         light = GL_LIGHT0 + index
         glEnable(light)
@@ -164,6 +173,8 @@ def main():
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.28, 0.28, 0.28, 1.0))
     glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 28.0)
+    if room_model is not None:
+        room_model.prepare()
     glutDisplayFunc(display)
     glutReshapeFunc(reshape)
     glutSpecialFunc(special_key)

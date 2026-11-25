@@ -7,11 +7,15 @@ from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt, gluOrtho2D
 from OpenGL.GL.shaders import compileProgram, compileShader
 from OpenGL.GLUT import (glutBitmapCharacter, glutSwapBuffers,
-                         GLUT_BITMAP_HELVETICA_18)
+                         glutStrokeCharacter, GLUT_BITMAP_HELVETICA_18,
+                         GLUT_STROKE_ROMAN)
 from PIL import Image
 
-from config import (BALL_RADIUS, LANE_BALL_CENTER_LIMIT, LANE_HALF_WIDTH,
-                    LANE_START_Z, PIN_DECK_Z, RESET_ZONE_Z,
+from config import (BALL_HOLDER_X, BALL_HOLDER_Z, BALL_RADIUS, BALL_START_Z,
+                    CLUB_BALL_SOURCE_X, CLUB_CEILING_Y, CLUB_FLOOR_SOURCE_Y,
+                    CLUB_PIN_CENTER_SOURCE_Z,
+                    LANE_BALL_CENTER_LIMIT, LANE_HALF_WIDTH, LANE_START_Z,
+                    PIN_DECK_Z, RESET_ZONE_Z, SCOREBOARD_LEFT_ANGLE,
                     WINDOW_HEIGHT, WINDOW_WIDTH)
 from physics import make_guide_curve
 
@@ -20,19 +24,21 @@ _shader_attempted = False
 _textures = {}
 _ASSET_DIR = Path(__file__).parent / "assets"
 _ROOM_HALF_WIDTH = 5.5
-_ROOM_FRONT_Z = -10.0
-_ROOM_BACK_Z = 11.0
+_ROOM_FRONT_Z = LANE_START_Z - 1.5
+_ROOM_BACK_Z = RESET_ZONE_Z + 3.0
 _ROOM_HEIGHT = 5.8
+_scoreboard_text_scale = 0.001
+_scoreboard_text_x_scale = 0.001
 _fps_started = time.perf_counter()
 _fps_frames = 0
 _fps_value = 0.0
 _guide_rail_points = None
 _hud_text = [None, None, None, None, None]
 _hud_lists = [0, 0, 0, 0, 0]
-_ROOM_LIGHT_POSITIONS = [(-2.5, 5.35, -4.0, 1.0),
-                         (2.5, 5.35, -0.5, 1.0),
-                         (-2.5, 5.35, 4.0, 1.0),
-                         (2.5, 5.35, 7.0, 1.0)]
+_ROOM_LIGHT_POSITIONS = [(-3.2, 3.35, -8.0, 1.0),
+                         (3.2, 3.35, 1.0, 1.0),
+                         (-3.2, 3.35, 11.0, 1.0),
+                         (3.2, 3.35, 21.0, 1.0)]
 
 
 def _get_texture(filename):
@@ -71,7 +77,23 @@ def _draw_textured_quad(texture, color, normal, vertices):
     glDisable(GL_TEXTURE_2D)
 
 
-def _draw_room():
+def _draw_room(room_model=None):
+    if room_model is not None:
+        # Rebuild the GLB's original units, then rotate its +X-to-pin axis
+        # onto game +Z. These anchors put the rack approach and pin head on
+        # the same coordinates used by BowlingGame and the physics solver.
+        center = room_model.source_center
+        unit_scale = 1.0 / room_model.normalization_scale
+        glPushMatrix()
+        glTranslatef(center[2] - CLUB_PIN_CENTER_SOURCE_Z,
+                     center[1] - CLUB_FLOOR_SOURCE_Y,
+                     BALL_START_Z + CLUB_BALL_SOURCE_X - center[0])
+        glRotatef(90.0, 0.0, 1.0, 0.0)
+        glScalef(unit_scale, unit_scale, unit_scale)
+        room_model.draw((1.0, 1.0, 1.0))
+        glPopMatrix()
+        return
+
     wall = _get_texture("wall.jpg")
     floor = _get_texture("floor.jpg")
     half = _ROOM_HALF_WIDTH
@@ -139,30 +161,72 @@ def _draw_scoreboard_quad(left, bottom, right, top, z, color):
 
 def _draw_scoreboard_text(text, x, y, z, color):
     glColor3f(*color)
-    glRasterPos3f(x, y, z)
+    glPushMatrix()
+    glTranslatef(x, y, z)
+    # Stroke glyphs live in the display plane, so yaw and perspective distort
+    # the text together with the screen instead of leaving it screen-aligned.
+    glScalef(-_scoreboard_text_x_scale, _scoreboard_text_scale,
+             _scoreboard_text_scale)
     for char in text:
-        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(char))
+        glutStrokeCharacter(GLUT_STROKE_ROMAN, ord(char))
+    glPopMatrix()
 
 
-def _draw_scoreboard(game):
-    """Draw the pinfall board hanging above the centered lane approach."""
+def _draw_scoreboard(game, compact=False):
+    """Draw the live pinfall board and its ceiling suspension."""
+    global _scoreboard_text_scale, _scoreboard_text_x_scale
+    _scoreboard_text_scale = 0.001 if compact else 0.0015
+    _scoreboard_text_x_scale = (_scoreboard_text_scale * 0.5 / 0.28
+                                if compact else _scoreboard_text_scale)
     left, right = -1.9, 1.9
     bottom, top, z = 3.52, 5.13, -5.72
     glDisable(GL_LIGHTING)
+    glPushMatrix()
+    if compact:
+        # Seat the 4:3 board on the holder and turn it toward the opposite side.
+        glTranslatef(BALL_HOLDER_X, 1.45, BALL_HOLDER_Z)
+        glRotatef(-SCOREBOARD_LEFT_ANGLE, 0.0, 1.0, 0.0)
+        # The source panel is 3.8 x 1.61. These axes make its rendered face
+        # approximately 1.06 x 0.81 units, a 4:3 ratio.
+        glScalef(0.28, 0.5, 0.5)
+        glTranslatef(0.0, -4.325, 5.72)
+        # Suspend the panel from the model ceiling while keeping it at the
+        # low holder-side position. The rear supports meet the panel's top edge.
+        ceiling_local_y = 4.325 + (CLUB_CEILING_Y - 1.45) / 0.5
+        glColor3f(0.12, 0.14, 0.17)
+        glBegin(GL_QUADS)
+        for center_x in (-1.55, 1.55):
+            x0, x1 = center_x - 0.07, center_x + 0.07
+            y0, y1 = top - 0.18, ceiling_local_y
+            z0, z1 = -5.70, -5.56
+            glVertex3f(x0, y0, z0); glVertex3f(x1, y0, z0)
+            glVertex3f(x1, y1, z0); glVertex3f(x0, y1, z0)
+            glVertex3f(x0, y0, z1); glVertex3f(x0, y1, z1)
+            glVertex3f(x1, y1, z1); glVertex3f(x1, y0, z1)
+            glVertex3f(x0, y0, z0); glVertex3f(x0, y1, z0)
+            glVertex3f(x0, y1, z1); glVertex3f(x0, y0, z1)
+            glVertex3f(x1, y0, z0); glVertex3f(x1, y0, z1)
+            glVertex3f(x1, y1, z1); glVertex3f(x1, y1, z0)
+            glVertex3f(x0, y0, z0); glVertex3f(x0, y0, z1)
+            glVertex3f(x1, y0, z1); glVertex3f(x1, y0, z0)
+            glVertex3f(x0, y1, z0); glVertex3f(x1, y1, z0)
+            glVertex3f(x1, y1, z1); glVertex3f(x0, y1, z1)
+        glEnd()
 
-    # Suspended rods and a crossbar attach the panel to the lowered ceiling.
-    glColor3f(0.10, 0.10, 0.12)
-    glBegin(GL_QUADS)
-    for x in (-0.78, 0.78):
-        glVertex3f(x - 0.045, top, z + 0.10)
-        glVertex3f(x + 0.045, top, z + 0.10)
-        glVertex3f(x + 0.045, _ROOM_HEIGHT - 0.06, z + 0.10)
-        glVertex3f(x - 0.045, _ROOM_HEIGHT - 0.06, z + 0.10)
-    glVertex3f(-0.95, _ROOM_HEIGHT - 0.08, z + 0.16)
-    glVertex3f(0.95, _ROOM_HEIGHT - 0.08, z + 0.16)
-    glVertex3f(0.95, _ROOM_HEIGHT - 0.20, z + 0.16)
-    glVertex3f(-0.95, _ROOM_HEIGHT - 0.20, z + 0.16)
-    glEnd()
+    if not compact:
+        # Use the original ceiling hanger for the procedural-scene scoreboard.
+        glColor3f(0.10, 0.10, 0.12)
+        glBegin(GL_QUADS)
+        for x in (-0.78, 0.78):
+            glVertex3f(x - 0.045, top, z + 0.10)
+            glVertex3f(x + 0.045, top, z + 0.10)
+            glVertex3f(x + 0.045, _ROOM_HEIGHT - 0.06, z + 0.10)
+            glVertex3f(x - 0.045, _ROOM_HEIGHT - 0.06, z + 0.10)
+        glVertex3f(-0.95, _ROOM_HEIGHT - 0.08, z + 0.16)
+        glVertex3f(0.95, _ROOM_HEIGHT - 0.08, z + 0.16)
+        glVertex3f(0.95, _ROOM_HEIGHT - 0.20, z + 0.16)
+        glVertex3f(-0.95, _ROOM_HEIGHT - 0.20, z + 0.16)
+        glEnd()
 
     _draw_scoreboard_rounded_panel(left - 0.04, bottom - 0.02,
                                    right + 0.04, top + 0.02, z + 0.04, 0.38,
@@ -179,7 +243,8 @@ def _draw_scoreboard(game):
     heading = game.score_notification or "SCORE METER"
     heading_color = ((1.0, 0.91, 0.45) if "TURKEY" in heading or "PERFECT" in heading
                      else (1.0, 0.78, 0.84))
-    _draw_scoreboard_text(heading, left + 0.20, top - 0.28, z - 0.04,
+    heading_x = 0.43 if compact else 0.70
+    _draw_scoreboard_text(heading, heading_x, top - 0.28, z - 0.04,
                           heading_color)
     grid_left, grid_right = left + 0.53, right - 0.12
     cell_width = (grid_right - grid_left) / 10
@@ -213,7 +278,7 @@ def _draw_scoreboard(game):
                      else (grid_bottom + grid_middle) * 0.5)
         active = player == game.current_player
         color = (1.0, 0.85, 0.48) if active else (0.92, 0.68, 0.77)
-        _draw_scoreboard_text(f"P{player + 1}", left + 0.16, row_y,
+        _draw_scoreboard_text(f"P{player + 1}", left + 0.35, row_y,
                               z - 0.05, color)
         card = game.scorecards[player]
         cumulative = card.cumulative_scores
@@ -231,13 +296,16 @@ def _draw_scoreboard(game):
                                       cell_x + 0.035 * len(score_text), row_y - 0.105,
                                       z - 0.05, color)
 
+    p1_total_x = 1.30 if compact else left + 1.0
     _draw_scoreboard_text(f"P1 TOTAL  {game.player_totals[0]}",
-                          left + 0.18, bottom + 0.15, z - 0.04, (1.0, 0.82, 0.54))
+                          p1_total_x, bottom + 0.15, z - 0.04, (1.0, 0.82, 0.54))
     if game.player_count == 2:
+        p2_total_x = -0.70 if compact else right - 1.45
         _draw_scoreboard_text(f"P2 TOTAL  {game.player_totals[1]}",
-                              left + 2.25, bottom + 0.15, z - 0.04,
+                              p2_total_x, bottom + 0.15, z - 0.04,
                               (1.0, 0.82, 0.54))
     glLineWidth(1.0)
+    glPopMatrix()
     glEnable(GL_LIGHTING)
 
 
@@ -450,6 +518,8 @@ def _draw_ball(ball, ball_model):
 
 def _draw_pins(pins, pin_model):
     for pin in pins:
+        if pin.cleared:
+            continue
         _draw_contact_shadow(pin.x, pin.z, 0.16, 0.12, 0.26)
         glPushMatrix()
         glTranslatef(pin.x, 0.0, pin.z)
@@ -517,8 +587,16 @@ def _draw_hud(game, camera, fps):
     frame = min(card.current_frame + (1 if game._frame_complete_pending else 0), 10)
     if frame == 0:
         frame = 1
-    lines = [f"{game.player_count}P  |  TURN {game.turn_number}/{total_turns}  |  PLAYER {game.current_player + 1}  |  FRAME {frame}  |  {state.upper()}",
-             f"SCORE {card.total_score}  |  PINS {game.standing_pins}/10  |  AIM {math.degrees(game.aim):+.0f} deg  |  POWER {game.power:.1f}  |  FPS {fps:.0f}",
+    if game.player_count == 2:
+        score_text = (f"P1 {game.player_totals[0]}  |  P2 {game.player_totals[1]}  |  "
+                      f"PINS {game.standing_pins}/10  |  AIM {math.degrees(game.aim):+.0f} deg  |  "
+                      f"POWER {game.power:.1f}  |  FPS {fps:.0f}")
+    else:
+        score_text = (f"SCORE {card.total_score}  |  PINS {game.standing_pins}/10  |  "
+                      f"AIM {math.degrees(game.aim):+.0f} deg  |  POWER {game.power:.1f}  |  "
+                      f"FPS {fps:.0f}")
+    lines = [f"{game.player_count}P  |  TURN {game.turn_number}/{total_turns}  |  PLAYER {game.current_player + 1}  |  FRAME {frame}  |  {state.upper()}  |  CAMERA {camera.mode.upper()}",
+             score_text,
              game.message,
              "ARROWS aim / power    A,D position    LEFT DRAG aim & power, release to throw",
              f"RIGHT DRAG look    SPACE throw / next roll    C camera    R reset    ESC title"]
@@ -628,7 +706,7 @@ def _draw_title_menu(game):
     glMatrixMode(GL_MODELVIEW)
 
 
-def draw_scene(game, camera, ball_model, pin_model):
+def draw_scene(game, camera, ball_model, pin_model, room_model=None):
     fps = _measure_fps()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glMatrixMode(GL_MODELVIEW)
@@ -637,22 +715,32 @@ def draw_scene(game, camera, ball_model, pin_model):
     # Fixed-function light positions are transformed by the active view matrix.
     for index, position in enumerate(_ROOM_LIGHT_POSITIONS):
         glLightfv(GL_LIGHT0 + index, GL_POSITION, position)
-    _draw_room()
-    _draw_alley_decorations(ball_model)
+    _draw_room(room_model)
+    if room_model is None:
+        _draw_alley_decorations(ball_model)
     if game.phase == "menu":
-        _draw_lane()
-        _draw_guide_rails()
+        if room_model is None:
+            _draw_lane()
+            _draw_guide_rails()
         _draw_pins(game.pins, pin_model)
         _draw_ball(game.ball, ball_model)
         _draw_title_menu(game)
         glutSwapBuffers()
         return
-    _draw_scoreboard(game)
-    _draw_lane()
-    _draw_guide_rails()
+    if room_model is None:
+        _draw_scoreboard(game)
+        _draw_lane()
+        _draw_guide_rails()
+    else:
+        _draw_scoreboard(game, compact=True)
     _draw_pins(game.pins, pin_model)
     _draw_ball(game.ball, ball_model)
     if game.phase == "aiming":
         _draw_trajectory(game.trajectory())
     _draw_hud(game, camera, fps)
     glutSwapBuffers()
+
+
+
+
+

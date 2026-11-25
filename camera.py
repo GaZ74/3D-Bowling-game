@@ -2,7 +2,9 @@
 
 import math
 
-from config import CAMERA_MODES
+from config import (BALL_HOLDER_X, BALL_HOLDER_Z, BALL_START_Z,
+                    CAMERA_MODES, FOLLOW_STOP_Z, PIN_DECK_Z,
+                    SCOREBOARD_LEFT_ANGLE)
 
 
 class Camera:
@@ -39,21 +41,32 @@ class Camera:
 
     def update(self, ball, dt: float):
         if self.mode == "fixed":
-            # Keep the overview sightline below the hanging score panel.
-            desired = ([0.0, 3.0, -9.0], [0.0, 1.0, 3.4])
+            # Lower overview covers the lane without rising above the room.
+            desired = ([0.0, 2.2, BALL_START_Z - 7.0],
+                       [0.0, 0.8, PIN_DECK_Z * 0.55])
         elif self.mode == "result":
-            desired = ([0.0, 4.2, 1.8], [0.0, 0.3, 3.4])
+            # Keep the result view inside the room and frame the pin deck.
+            desired = ([ball.x * 0.35, 1.9, PIN_DECK_Z - 4.0],
+                       [0.0, 0.35, PIN_DECK_Z + 0.35])
         elif self.mode == "scoreboard":
-            desired = ([0.0, 4.45, -9.0], [0.0, 4.25, -5.72])
+            # Track the board from the front-right, matching its reversed yaw.
+            angle = math.radians(SCOREBOARD_LEFT_ANGLE)
+            distance = 2.8
+            desired = ([BALL_HOLDER_X + math.sin(angle) * distance, 1.10,
+                        BALL_HOLDER_Z - math.cos(angle) * distance],
+                       [BALL_HOLDER_X, 1.45, BALL_HOLDER_Z])
         else:  # orbit around a focus point just ahead of the ball
             if not self.look_dragging:
                 recenter = min(1.0, dt * 2.5)
                 self.look_yaw += (0.0 - self.look_yaw) * recenter
                 self.look_pitch += (0.0 - self.look_pitch) * recenter
-            focus = (ball.x * 0.68, 0.62, ball.z + 1.45)
+            # Stop tracking at two thirds of the lane so the camera stays
+            # inside the room while the ball finishes its run to the pins.
+            focus_z = min(ball.z, FOLLOW_STOP_Z)
+            focus = (ball.x * 0.68, 0.48, focus_z + 1.0)
             yaw = self.look_yaw
-            pitch = max(-0.2, min(0.95, 0.38 + self.look_pitch))
-            distance = 3.8
+            pitch = max(-0.2, min(0.75, 0.18 + self.look_pitch))
+            distance = 3.0
             horizontal = distance * math.cos(pitch)
             desired = ([focus[0] - math.sin(yaw) * horizontal,
                         focus[1] + math.sin(pitch) * distance,

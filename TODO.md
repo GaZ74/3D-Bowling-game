@@ -46,3 +46,9 @@ This patch focuses on frame rate and bowling physics. Gameplay polish, model-mat
 ## Beta-test ideas to add
 
 - Add observations, bugs, and feature requests here after the beta test.
+
+## Deferred gameplay fixes: scoreboard, difficulty, and aiming
+
+- [ ] **Scoreboard text overlaps in the frame grid and notification.** Proposed fix: reduce the score-mark font slightly and fit each string to its available cell width; give long notifications a separate row and shrink or wrap them to the display width. Check single-player, two-player, strike, Turkey, and 300-game displays.
+- [ ] **Full-power straight throws produce strikes too often.** Proposed fix: tune ball-to-pin energy transfer and lane friction, then make strike outcomes depend more on pocket impact position and entry angle. Keep the physics deterministic so the game stays predictable while aiming.
+- [ ] **One arrow-key aim press sends the ball to the reset guide.** The current key step is 0.04 radians (about 2.3 degrees), which can shift the ball more than the usable lane width over the full lane length. Proposed fix: use much smaller keyboard increments (around 0.005–0.01 radians) and cap aiming based on start position, lane width, and distance to the pins; keep the trajectory preview in sync with those limits.

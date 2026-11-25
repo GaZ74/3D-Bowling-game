@@ -161,7 +161,7 @@ def _hit_pins_with_ball(ball, pins, ax, az, bx, bz):
     if speed <= 1e-6:
         return
     for pin in pins:
-        if pin.ball_contacted:
+        if pin.cleared or pin.ball_contacted:
             continue
         distance, cx, cz = _point_segment_distance(pin.x, pin.z, ax, az, bx, bz)
         if distance > BALL_RADIUS + PIN_RADIUS:
@@ -180,8 +180,12 @@ def _resolve_pin_pairs(pins):
     count = len(pins)
     for i in range(count):
         a = pins[i]
+        if a.cleared:
+            continue
         for j in range(i + 1, count):
             b = pins[j]
+            if b.cleared:
+                continue
             dx, dz = b.x - a.x, b.z - a.z
             distance = math.hypot(dx, dz)
             # The pin model is tall but this arcade physics keeps pin origins
@@ -221,6 +225,8 @@ def _step_pins(pins, dt):
     linear_decay = math.exp(-PIN_LINEAR_DAMPING * dt)
     angular_decay = math.exp(-PIN_ANGULAR_DAMPING * dt)
     for pin in pins:
+        if pin.cleared:
+            continue
         pin.x += pin.vx * dt
         pin.z += pin.vz * dt
         pin.vx *= linear_decay
@@ -254,7 +260,7 @@ def _step_pins(pins, dt):
 def _mark_out_of_bounds_pins(pins):
     """Count pins outside the lane/reset-line bounds as fallen, and lay them over."""
     for pin in pins:
-        if pin.down:
+        if pin.down or pin.cleared:
             continue
         if pin.x > PIN_FALL_X_LIMIT:
             pin.down = True
@@ -311,3 +317,5 @@ def step_physics(ball, pins, dt):
     _resolve_pin_pairs(pins)
     _mark_out_of_bounds_pins(pins)
     return ball.reached_reset
+
+
