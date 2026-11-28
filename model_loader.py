@@ -3,6 +3,12 @@ import trimesh
 from OpenGL.GL import *
 from PIL import Image
 
+RGB_GRAFFITI_NODES = {"Line002_podsvetka_0", "Line003_podsvetka_0"}
+WARM_CEILING_LIGHT_PREFIX = "Cylinder003_Material #191_"
+# The right-wall neon mesh sits nearly coplanar with the imported wall surface.
+# Nudge it slightly into the alley to prevent depth-fighting/partial occlusion.
+NODE_SOURCE_OFFSETS = {"Line002_podsvetka_0": (0.0, 0.0, -0.05)}
+
 
 class Model:
     def __init__(self, path, target_size, anchor="center", use_materials=False,
@@ -15,13 +21,16 @@ class Model:
             mesh = scene.geometry[geometry_name].copy()
             mesh.apply_transform(transform)
             if isinstance(mesh, trimesh.Trimesh):
+                source_offset = NODE_SOURCE_OFFSETS.get(node_name)
+                if source_offset is not None:
+                    mesh.apply_translation(source_offset)
                 source_meshes.append(mesh)
                 excluded = any(
                     token.casefold() in f"{node_name} {geometry_name}".casefold()
                     for token in exclude_name_tokens
                 )
                 if not excluded:
-                    meshes.append(mesh)
+                    meshes.append((node_name, mesh))
 
         if not meshes:
             raise ValueError(f"No mesh geometry found in {path}")
@@ -47,7 +56,7 @@ class Model:
         self.parts = []
         self.material_groups = []
         group_lookup = {}
-        for mesh in meshes:
+        for node_name, mesh in meshes:
             vertices = (mesh.vertices - center) * scale
             faces = mesh.faces
             normals = mesh.face_normals
@@ -70,10 +79,17 @@ class Model:
             texture_key = None
             if texture is not None:
                 texture_key = (texture.size, hash(texture.tobytes()))
-            key = (color, texture_key)
+            if node_name in RGB_GRAFFITI_NODES:
+                dynamic_color_tag = "rgb_graffiti"
+            elif node_name.startswith(WARM_CEILING_LIGHT_PREFIX):
+                dynamic_color_tag = "warm_ceiling_lights"
+            else:
+                dynamic_color_tag = None
+            key = (color, texture_key, dynamic_color_tag)
             group = group_lookup.get(key)
             if group is None:
-                group = {"color": color, "texture": texture, "parts": []}
+                group = {"color": color, "texture": texture, "parts": [],
+                         "dynamic_color_tag": dynamic_color_tag}
                 group_lookup[key] = group
                 self.material_groups.append(group)
             uv = getattr(visual, "uv", None)
@@ -163,32 +179,79 @@ class Model:
         elif not self._display_list:
             self._compile_display_list()
 
-    def draw(self, color):
+    def draw(self, color, dynamic_colors=None, exclude_dynamic_tags=()):
         if self.use_materials:
             if not self._material_lists:
                 self._compile_material_lists()
+            excluded_tags = set(exclude_dynamic_tags)
             for index, group in enumerate(self.material_groups):
+                dynamic_tag = group["dynamic_color_tag"]
+                if dynamic_tag in excluded_tags:
+                    continue
+                neon_unlit = bool(dynamic_tag and dynamic_colors
+                                  and dynamic_tag in dynamic_colors)
+                was_lit = bool(glIsEnabled(GL_LIGHTING)) if neon_unlit else False
+                group_color = (dynamic_colors.get(dynamic_tag, group["color"])
+                               if dynamic_colors and dynamic_tag else group["color"])
+                glColor3f(*group_color)
+                emission = ((*group_color, 1.0) if dynamic_tag and dynamic_colors
+                            and dynamic_tag in dynamic_colors else (0.0, 0.0, 0.0, 1.0))
+                glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, emission)
+                if neon_unlit and index < len(self._material_lists):
+                    # Treat neon strokes as self-lit, and bias them just ahead
+                    # of their wall so depth precision cannot break the lines.
+                    glDisable(GL_LIGHTING)
+                    glEnable(GL_POLYGON_OFFSET_FILL)
+                    glPolygonOffset(-1.0, -1.0)
                 if index >= len(self._material_lists):
                     for fallback_group in self.material_groups:
                         fallback_texture = self._upload_texture(fallback_group["texture"])
-                        glColor3f(*fallback_group["color"])
+                        fallback_tag = fallback_group["dynamic_color_tag"]
+                        if fallback_tag in excluded_tags:
+                            continue
+                        fallback_neon = bool(fallback_tag and dynamic_colors
+                                             and fallback_tag in dynamic_colors)
+                        fallback_was_lit = (bool(glIsEnabled(GL_LIGHTING))
+                                            if fallback_neon else False)
+                        fallback_color = (dynamic_colors.get(fallback_tag, fallback_group["color"])
+                                          if dynamic_colors and fallback_tag
+                                          else fallback_group["color"])
+                        glColor3f(*fallback_color)
+                        fallback_emission = ((*fallback_color, 1.0)
+                                             if fallback_tag and dynamic_colors
+                                             and fallback_tag in dynamic_colors
+                                             else (0.0, 0.0, 0.0, 1.0))
+                        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, fallback_emission)
+                        if fallback_neon:
+                            glDisable(GL_LIGHTING)
+                            glEnable(GL_POLYGON_OFFSET_FILL)
+                            glPolygonOffset(-1.0, -1.0)
                         if fallback_texture:
                             glEnable(GL_TEXTURE_2D)
                             glBindTexture(GL_TEXTURE_2D, fallback_texture)
                         else:
                             glDisable(GL_TEXTURE_2D)
                         self._draw_material_group(fallback_group)
+                        if fallback_neon:
+                            glDisable(GL_POLYGON_OFFSET_FILL)
+                            if fallback_was_lit:
+                                glEnable(GL_LIGHTING)
                     glDisable(GL_TEXTURE_2D)
+                    glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
                     return
                 texture_id = self._upload_texture(group["texture"])
-                glColor3f(*group["color"])
                 if texture_id:
                     glEnable(GL_TEXTURE_2D)
                     glBindTexture(GL_TEXTURE_2D, texture_id)
                 else:
                     glDisable(GL_TEXTURE_2D)
                 glCallList(self._material_lists[index])
+                if neon_unlit:
+                    glDisable(GL_POLYGON_OFFSET_FILL)
+                    if was_lit:
+                        glEnable(GL_LIGHTING)
             glDisable(GL_TEXTURE_2D)
+            glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
             return
         glColor3f(*color)
         if not self._display_list:

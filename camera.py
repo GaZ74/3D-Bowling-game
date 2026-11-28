@@ -21,8 +21,16 @@ class Camera:
         return CAMERA_MODES[self.mode_index]
 
     def cycle_mode(self):
-        self.mode_index = (self.mode_index + 1) % len(CAMERA_MODES)
-        if self.mode == "follow":
+        next_index = (self.mode_index + 1) % len(CAMERA_MODES)
+        self.set_mode(CAMERA_MODES[next_index])
+
+    def set_mode(self, mode):
+        """Select a named camera mode and clear stale look-drag state."""
+        if mode not in CAMERA_MODES:
+            return
+        self.mode_index = CAMERA_MODES.index(mode)
+        self.look_dragging = False
+        if mode == "follow":
             self.look_yaw = 0.0
             self.look_pitch = 0.0
 

@@ -29,22 +29,24 @@ PIN_ROW_DEPTH = 0.19
 PIN_ROWS = 4
 PIN_RADIUS = 0.11
 
-# Pins crossing these playable-area bounds count as fallen. The lateral limit
-# marks the inner gutter edge; the far limit follows the
-# physical reset line rather than the curved ball-return guide.
+# Pins crossing these pin-deck bounds count as fallen. Anything swept past the
+# back of the rack enters the pit and should no longer count as standing.
 PIN_FALL_X_LIMIT = LANE_HALF_WIDTH - 0.20  # inner gutter edge
 PIN_FALL_MIN_Z = LANE_START_Z - PIN_RADIUS
-PIN_FALL_MAX_Z = PIN_DECK_Z + 2.0 + PIN_RADIUS
+PIN_BACK_Z = PIN_DECK_Z + (PIN_ROWS - 1) * PIN_ROW_DEPTH + PIN_RADIUS
+PIN_FALL_BACK_MARGIN = 0.0
+PIN_FALL_MAX_Z = PIN_BACK_Z + PIN_FALL_BACK_MARGIN
 
 # Fixed-step motion keeps collisions stable even if rendering slows briefly.
 PHYSICS_HZ = 120
 MAX_PHYSICS_STEPS = 12
-BALL_PIN_IMPULSE = 0.58
-PIN_PIN_RESTITUTION = 0.35
-PIN_LINEAR_DAMPING = 1.7
-PIN_ANGULAR_DAMPING = 2.2
+BALL_PIN_IMPULSE = 0.14
+BALL_IMPULSE_REFERENCE_SPEED = 8.0
+PIN_PIN_RESTITUTION = 0.08
+PIN_LINEAR_DAMPING = 3.0
+PIN_ANGULAR_DAMPING = 2.6
 PIN_UPRIGHT_STIFFNESS = 1.1
-PIN_FALL_ANGLE = 0.92
+PIN_FALL_ANGLE = 0.84
 PIN_MAX_TILT = 1.50
 PIN_STOP_SPEED = 0.045
 
@@ -52,7 +54,6 @@ PIN_STOP_SPEED = 0.045
 LANE_BALL_CENTER_LIMIT = LANE_HALF_WIDTH - BALL_RADIUS - 0.20  # extra visual clearance from the model gutter
 GUIDE_CENTER_X = LANE_BALL_CENTER_LIMIT  # keep the guided ball center inside this lane
 GUIDE_TURN_RADIUS = BALL_RADIUS
-PIN_BACK_Z = PIN_DECK_Z + (PIN_ROWS - 1) * PIN_ROW_DEPTH + PIN_RADIUS
 GUIDE_TURN_START_Z = PIN_BACK_Z + BALL_RADIUS + 0.25
 GUIDE_RESET_X = GUIDE_CENTER_X - GUIDE_TURN_RADIUS
 RESET_ZONE_Z = GUIDE_TURN_START_Z + GUIDE_TURN_RADIUS + 0.95

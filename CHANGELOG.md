@@ -1,4 +1,27 @@
 # Changelog
+## [0.2.0-beta.2] - 2026-11-26
+
+Final beta update, following 0.2.0-beta.1.
+
+### Physics and gameplay
+
+- Rebalanced ball-to-pin impact, pin fall threshold, and directional pin-to-pin energy transfer. Direct hits topple pins more reliably, while straight throws at default power no longer produce an automatic strike.
+- Added small per-throw differences in pin balance and contact angle so repeated shots produce varied pin-fall motion and settling.
+- Tightened the pin-deck bounds so pins beyond the lane edge or back of the rack count as fallen, with a tipping animation.
+
+### Scoreboard and lighting
+
+- Fit scoreboard headings, player labels, frame marks, cumulative scores, and totals to the available board space; shortened Turkey and perfect-game headings.
+- Verified strike and spare bonuses remain pending until their required following rolls are recorded. The displayed total represents all fully resolved frames.
+- Added eight grouped ceiling point lights and a full-alley orthographic shadow volume. Tables, chairs, ball holders, and other room objects cast shadows onto gameplay objects and room surfaces. A depth-biased receiver pass suppresses self-shadowing; ball and pin shadows cover the full lane.
+
+### Verification and remaining checks
+
+- Simulated 100 centered throws at default power with no strikes, 100 centered throws at maximum power with 50 strikes, and 100 throws at force 10 with 15 strikes. Pin animation variation remained active across repeated throws.
+- Python syntax checks passed for the changed modules.
+- The fixed-camera view was observed near 60 FPS; sustained performance still needs measurement on the target computer during throws and pinfall.
+- Pin and ball motion remain an arcade approximation, not a full rigid-body simulation.
+
 
 ## [0.2.0-beta.1] - 2026-11-25
 
@@ -12,6 +35,7 @@ First beta build, following the 0.1.0 alpha.
 - Adjusted ball and pin lane bounds and narrowed the reset guide path to keep play closer to its own lane.
 - Lowered camera views, stopped the follow camera before the pin deck, and kept the camera mode visible in the HUD.
 - Kept the procedural room available as a fallback with `USE_CLUB_ROOM_MODEL = False`.
+- Added a cached shadow-map pass using ceiling-bulb lighting, with dynamic shadows on the imported room, lane, ball, and gameplay pins.
 
 ### Known issues and beta checks
 
@@ -22,7 +46,8 @@ First beta build, following the 0.1.0 alpha.
 - The new second-throw pin reset and tighter out-of-bounds pin threshold need a full play-through to confirm pin IDs, pinfall totals, and frame transitions remain correct.
 - The 60 FPS target has not been measured consistently on the intended computer and resolution.
 - Ball and pin motion use simplified arcade physics rather than full rigid-body simulation.
-- Room-model PBR materials are not fully rendered. Shadows are floor contact approximations and do not cast onto the pins, ball, or room.
+- The eight ceiling fixture lights illuminate the room; one shared top-down shadow map covers the full alley rather than generating a separate map for every bulb. Shadow quality and frame-rate impact still need testing.
+- Original GLB metallic and roughness channels are not fully supported.
 - The Gobble Gobble achievement is tracked only in-game; it is not connected to an external achievement or trophy platform.
 
 ## [0.1.0-alpha] - 2026-11-24
@@ -62,6 +87,8 @@ First complete alpha build of the 3D Bowling Game prototype.
 
 - Python syntax compilation passed for all 8 Python modules.
 - Interactive gameplay, scoring scenarios, and final visual presentation still need a full alpha play-through.
+
+
 
 
 

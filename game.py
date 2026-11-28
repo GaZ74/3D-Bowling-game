@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import math
+import random
 
 from config import (BALL_RADIUS, BALL_START_Z, BALL_SPEED_DEFAULT,
                     BALL_SPEED_MAX, BALL_SPEED_MIN, BALL_SPEED_STEP,
@@ -41,6 +42,9 @@ class Pin:
     home_x: float | None = None
     home_z: float | None = None
     cleared: bool = False
+    pin_contacts: set = field(default_factory=set)
+    roll_angular_scale: float = 1.0
+    roll_contact_bias: float = 0.0
 
 
 class BowlingGame:
@@ -93,6 +97,7 @@ class BowlingGame:
             pin.tilt_x = pin.tilt_z = 0.0
             pin.omega_x = pin.omega_z = 0.0
             pin.ball_contacted = False
+            pin.pin_contacts.clear()
 
     @property
     def standing_pins(self):
@@ -109,7 +114,8 @@ class BowlingGame:
 
     def change_aim(self, direction: int):
         if self.phase == "aiming":
-            self.aim = max(-MAX_AIM_ANGLE, min(MAX_AIM_ANGLE, self.aim + direction * 0.04))
+            self.aim = max(-MAX_AIM_ANGLE, min(
+                MAX_AIM_ANGLE, self.aim + direction * math.radians(0.1)))
 
     def change_power(self, direction: int):
         if self.phase == "aiming":
@@ -127,6 +133,11 @@ class BowlingGame:
             return
         for pin in self.pins:
             pin.ball_contacted = False
+            pin.pin_contacts.clear()
+            # Tiny per-roll differences in balance and contact alignment make
+            # each rack react slightly differently without changing the aim.
+            pin.roll_angular_scale = random.uniform(0.93, 1.07)
+            pin.roll_contact_bias = math.radians(random.uniform(-1.5, 1.5))
         self._pins_before_roll = self.standing_pins
         self.ball = Ball(x=self.start_x, vx=math.sin(self.aim) * self.power,
                          vz=math.cos(self.aim) * self.power)
@@ -177,10 +188,10 @@ class BowlingGame:
                     self.phase = "result"
                     player_label = f"P{self.current_player + 1}"
                     if event == "TURKEY":
-                        self.score_notification = f"{player_label} TURKEY - GOBBLE GOBBLE UNLOCKED!"
+                        self.score_notification = f"{player_label} TURKEY!"
                         self.message = "TURKEY! Gobble Gobble achievement unlocked!"
                     elif event == "PERFECT_GAME":
-                        self.score_notification = f"{player_label} PERFECT GAME - 300!"
+                        self.score_notification = f"{player_label} PERFECT 300!"
                         self.message = "PERFECT GAME! 300!"
                     elif card.game_over and self.ball.on_guide:
                         self.message = (f"{player_label} finished with {card.total_score} - "
@@ -194,11 +205,11 @@ class BowlingGame:
                                            for index in range(self.player_count))
                     if self.match_over and event != "PERFECT_GAME":
                         if event == "TURKEY":
-                            self.score_notification = f"{player_label} TURKEY - GOBBLE GOBBLE UNLOCKED!"
+                            self.score_notification = f"{player_label} TURKEY!"
                             self.message = (f"Game complete - {player_label}: {card.total_score}; "
                                             "Turkey achievement unlocked!")
                         else:
-                            self.score_notification = f"GAME COMPLETE - {card.total_score} POINTS"
+                            self.score_notification = f"{player_label} FINAL {card.total_score}"
                             self.message = f"Game complete - {player_label}: {card.total_score}"
         if (self.phase == "result" and not self.pins_moving
                 and "press Space" not in self.message):

@@ -2,13 +2,15 @@
 
 import math
 import time
+import colorsys
+import numpy as np
 from pathlib import Path
 from OpenGL.GL import *
-from OpenGL.GLU import gluLookAt, gluOrtho2D
+from OpenGL.GLU import gluLookAt, gluOrtho2D, gluPerspective
 from OpenGL.GL.shaders import compileProgram, compileShader
 from OpenGL.GLUT import (glutBitmapCharacter, glutSwapBuffers,
                          glutStrokeCharacter, GLUT_BITMAP_HELVETICA_18,
-                         GLUT_STROKE_ROMAN)
+                         GLUT_STROKE_ROMAN, glutStrokeWidth)
 from PIL import Image
 
 from config import (BALL_HOLDER_X, BALL_HOLDER_Z, BALL_RADIUS, BALL_START_Z,
@@ -35,10 +37,32 @@ _fps_value = 0.0
 _guide_rail_points = None
 _hud_text = [None, None, None, None, None]
 _hud_lists = [0, 0, 0, 0, 0]
-_ROOM_LIGHT_POSITIONS = [(-3.2, 3.35, -8.0, 1.0),
-                         (3.2, 3.35, 1.0, 1.0),
-                         (-3.2, 3.35, 11.0, 1.0),
-                         (3.2, 3.35, 21.0, 1.0)]
+# Six point lights model ceiling fixtures along the lanes. The final two
+# compatibility-pipeline slots are reserved for the animated graffiti spots.
+BULB_LIGHT_POSITIONS = tuple(
+    (x, 3.35, z, 1.0)
+    for z in (-8.0, 2.0, 12.0)
+    for x in (-2.7, 2.7)
+)
+GRAFFITI_LIGHT_POSITIONS = (
+    # Move each source just inside its wall so it lights the wall face too.
+    (3.6857, 1.72, 9.9105, 1.0),
+    (-6.1705, 1.72, 9.8850, 1.0),
+)
+WARM_BULB_RGB = (1.0, 0.90, 0.76)
+ROOM_TAGS_EXCLUDED_FROM_SHADOWS = ("rgb_graffiti", "warm_ceiling_lights")
+_SHADOW_SIZE = 768
+_SHADOW_ORTHO = (-8.0, 8.0, -24.0, 24.0)
+_SHADOW_LIGHT_HEIGHT = 3.35
+_SHADOW_LIGHT_CENTER_Z = 8.0
+_SHADOW_NEAR = 0.1
+_SHADOW_FAR = 8.0
+_shadow_attempted = False
+_shadow_fbo = 0
+_shadow_texture = 0
+_static_shadow_texture = 0
+_shadow_depth_program = 0
+_shadow_mask_program = 0
 
 
 def _get_texture(filename):
@@ -77,7 +101,77 @@ def _draw_textured_quad(texture, color, normal, vertices):
     glDisable(GL_TEXTURE_2D)
 
 
-def _draw_room(room_model=None):
+def _graffiti_rgb():
+    hue = (time.perf_counter() * 0.07) % 1.0
+    return colorsys.hsv_to_rgb(hue, 0.95, 1.0)
+
+
+def _graffiti_light_rgb():
+    # Keep the emitted strokes vivid, but use a softer, less saturated tint
+    # for the surrounding light spill.
+    return tuple(0.35 + channel * 0.65 for channel in _graffiti_rgb())
+
+
+def _draw_graffiti_lane_spill():
+    """Add soft RGB spill across the imported lanes and both side walls."""
+    floor_color = _graffiti_rgb()
+    wall_color = _graffiti_light_rgb()
+    center_x, center_z = -1.25, 9.90
+    radius_x, radius_z = 5.8, 8.5
+    segments = 48
+    glDisable(GL_LIGHTING)
+    glDisable(GL_TEXTURE_2D)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+    glDepthMask(GL_FALSE)
+    glBegin(GL_TRIANGLE_FAN)
+    glColor4f(*floor_color, 0.30)
+    glVertex3f(center_x, 0.055, center_z)
+    glColor4f(*floor_color, 0.0)
+    for index in range(segments + 1):
+        angle = 2.0 * math.pi * index / segments
+        glVertex3f(center_x + math.cos(angle) * radius_x, 0.055,
+                   center_z - math.sin(angle) * radius_z)
+    glEnd()
+    # The two wall washes sit just inside the imported wall faces, centered on
+    # each neon sign. Their broad falloff makes the color reach nearby lanes.
+    for wall_x, inward in ((3.76, -1.0), (-6.22, 1.0)):
+        glBegin(GL_TRIANGLE_FAN)
+        glColor4f(*wall_color, 0.08)
+        glVertex3f(wall_x, 1.64, center_z)
+        glColor4f(*wall_color, 0.0)
+        for index in range(segments + 1):
+            angle = 2.0 * math.pi * index / segments
+            glVertex3f(wall_x, 1.64 + math.cos(angle) * 1.0,
+                       center_z + inward * math.sin(angle) * 4.5)
+        glEnd()
+    glDepthMask(GL_TRUE)
+    glDisable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glEnable(GL_LIGHTING)
+
+
+def _update_graffiti_lights():
+    """Aim two softer RGB spotlights from the graffiti across the lane bank."""
+    color = _graffiti_light_rgb()
+    target = np.asarray((0.0, 0.2, 9.90))
+    first_light = GL_LIGHT0 + len(BULB_LIGHT_POSITIONS)
+    for index, position in enumerate(GRAFFITI_LIGHT_POSITIONS):
+        light = first_light + index
+        direction = target - np.asarray(position[:3])
+        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        glLightfv(light, GL_POSITION, position)
+        glLightfv(light, GL_SPOT_DIRECTION, direction)
+        # A broad beam spreads the graffiti glow across every lane, while the
+        # floor-only additive wash supplies the visible color without bathing
+        # the ceiling in RGB.
+        glLightf(light, GL_SPOT_CUTOFF, 85.0)
+        glLightf(light, GL_SPOT_EXPONENT, 2.0)
+        glLightfv(light, GL_AMBIENT, (0.0, 0.0, 0.0, 1.0))
+        glLightfv(light, GL_DIFFUSE, tuple(channel * 2.0 for channel in color) + (1.0,))
+
+
+def _draw_room(room_model=None, exclude_dynamic_tags=()):
     if room_model is not None:
         # Rebuild the GLB's original units, then rotate its +X-to-pin axis
         # onto game +Z. These anchors put the rack approach and pin head on
@@ -90,7 +184,11 @@ def _draw_room(room_model=None):
                      BALL_START_Z + CLUB_BALL_SOURCE_X - center[0])
         glRotatef(90.0, 0.0, 1.0, 0.0)
         glScalef(unit_scale, unit_scale, unit_scale)
-        room_model.draw((1.0, 1.0, 1.0))
+        graffiti_rgb = _graffiti_rgb()
+        room_model.draw((1.0, 1.0, 1.0),
+                        dynamic_colors={"rgb_graffiti": graffiti_rgb,
+                                        "warm_ceiling_lights": WARM_BULB_RGB},
+                        exclude_dynamic_tags=exclude_dynamic_tags)
         glPopMatrix()
         return
 
@@ -159,23 +257,35 @@ def _draw_scoreboard_quad(left, bottom, right, top, z, color):
     glEnd()
 
 
-def _draw_scoreboard_text(text, x, y, z, color):
+def _draw_scoreboard_text(text, x, y, z, color, scale=1.0):
     glColor3f(*color)
     glPushMatrix()
     glTranslatef(x, y, z)
     # Stroke glyphs live in the display plane, so yaw and perspective distort
     # the text together with the screen instead of leaving it screen-aligned.
-    glScalef(-_scoreboard_text_x_scale, _scoreboard_text_scale,
-             _scoreboard_text_scale)
+    glScalef(-_scoreboard_text_x_scale * scale, _scoreboard_text_scale * scale,
+             _scoreboard_text_scale * scale)
     for char in text:
         glutStrokeCharacter(GLUT_STROKE_ROMAN, ord(char))
     glPopMatrix()
 
 
+
+
+def _stroke_text_width(text):
+    return sum(glutStrokeWidth(GLUT_STROKE_ROMAN, ord(char)) for char in text)
+
+
+def _draw_scoreboard_text_fit(text, center_x, y, z, color, max_width):
+    width = _stroke_text_width(text) * _scoreboard_text_x_scale
+    scale = min(1.0, max_width / max(width, 1e-6))
+    x = center_x + width * scale * 0.5
+    _draw_scoreboard_text(text, x, y, z, color, scale)
+
 def _draw_scoreboard(game, compact=False):
     """Draw the live pinfall board and its ceiling suspension."""
     global _scoreboard_text_scale, _scoreboard_text_x_scale
-    _scoreboard_text_scale = 0.001 if compact else 0.0015
+    _scoreboard_text_scale = 0.00070 if compact else 0.0012
     _scoreboard_text_x_scale = (_scoreboard_text_scale * 0.5 / 0.28
                                 if compact else _scoreboard_text_scale)
     left, right = -1.9, 1.9
@@ -243,23 +353,26 @@ def _draw_scoreboard(game, compact=False):
     heading = game.score_notification or "SCORE METER"
     heading_color = ((1.0, 0.91, 0.45) if "TURKEY" in heading or "PERFECT" in heading
                      else (1.0, 0.78, 0.84))
-    heading_x = 0.43 if compact else 0.70
-    _draw_scoreboard_text(heading, heading_x, top - 0.28, z - 0.04,
-                          heading_color)
-    grid_left, grid_right = left + 0.53, right - 0.12
-    cell_width = (grid_right - grid_left) / 10
+    _draw_scoreboard_text_fit(heading, 0.0, top - 0.28, z - 0.04,
+                              heading_color, 3.25)
+    # Reserve one full-width column for the player labels, then use the rest
+    # for ten equal-width frame columns. This consumes the old empty gutter
+    # while keeping every player row aligned to the same cell dimensions.
+    grid_left, grid_right = left + 0.08, right - 0.08
+    cell_width = (grid_right - grid_left) / 11
     for frame in range(10):
         # The display is viewed from the negative-Z side, where screen-left
         # maps to positive world X. Reverse world X so frames read 1 through 10.
-        cell_x = grid_right - (frame + 0.5) * cell_width
-        _draw_scoreboard_text(str(frame + 1), cell_x + 0.045,
-                              top - 0.61, z - 0.04, (1.0, 0.72, 0.82))
+        cell_x = grid_right - (frame + 1.5) * cell_width
+        _draw_scoreboard_text_fit(str(frame + 1), cell_x, top - 0.61, z - 0.04,
+                                  (1.0, 0.72, 0.82), cell_width * 0.76)
 
     glColor3f(0.95, 0.27, 0.53)
     glLineWidth(1.2)
     glBegin(GL_LINES)
-    grid_bottom, grid_middle, grid_top = bottom + 0.35, bottom + 0.72, top - 0.62
-    for index in range(11):
+    grid_bottom, grid_top = bottom + 0.35, top - 0.62
+    grid_middle = (grid_bottom + grid_top) * 0.5
+    for index in range(12):
         x = grid_left + index * cell_width
         glVertex3f(x, grid_bottom, z - 0.04)
         glVertex3f(x, grid_top, z - 0.04)
@@ -278,32 +391,32 @@ def _draw_scoreboard(game, compact=False):
                      else (grid_bottom + grid_middle) * 0.5)
         active = player == game.current_player
         color = (1.0, 0.85, 0.48) if active else (0.92, 0.68, 0.77)
-        _draw_scoreboard_text(f"P{player + 1}", left + 0.35, row_y,
-                              z - 0.05, color)
+        label_x = grid_right - cell_width * 0.5
+        _draw_scoreboard_text_fit(f"P{player + 1}", label_x, row_y,
+                                  z - 0.05, color, cell_width * 0.78)
         card = game.scorecards[player]
         cumulative = card.cumulative_scores
         for frame_index in range(10):
-            cell_x = grid_right - (frame_index + 0.5) * cell_width
+            cell_x = grid_right - (frame_index + 1.5) * cell_width
             marks = card.frame_symbol(frame_index)
             if marks:
-                _draw_scoreboard_text(marks,
-                                      cell_x + 0.035 * len(marks), row_y + 0.055,
-                                      z - 0.05, color)
+                _draw_scoreboard_text_fit(marks, cell_x, row_y + 0.055,
+                                          z - 0.05, color, cell_width * 0.86)
             frame_score = cumulative[frame_index]
             if frame_score is not None:
                 score_text = str(frame_score)
-                _draw_scoreboard_text(score_text,
-                                      cell_x + 0.035 * len(score_text), row_y - 0.105,
-                                      z - 0.05, color)
+                _draw_scoreboard_text_fit(score_text, cell_x, row_y - 0.105,
+                                          z - 0.05, color, cell_width * 0.86)
 
-    p1_total_x = 1.30 if compact else left + 1.0
-    _draw_scoreboard_text(f"P1 TOTAL  {game.player_totals[0]}",
-                          p1_total_x, bottom + 0.15, z - 0.04, (1.0, 0.82, 0.54))
-    if game.player_count == 2:
-        p2_total_x = -0.70 if compact else right - 1.45
-        _draw_scoreboard_text(f"P2 TOTAL  {game.player_totals[1]}",
-                              p2_total_x, bottom + 0.15, z - 0.04,
-                              (1.0, 0.82, 0.54))
+    if game.player_count == 1:
+        total = f"P1 TOTAL  {game.player_totals[0]}"
+        _draw_scoreboard_text_fit(total, 0.0, bottom + 0.15, z - 0.04,
+                                  (1.0, 0.82, 0.54), 3.25)
+    else:
+        for player, center_x in enumerate((1.12, -1.12)):
+            total = f"P{player + 1} TOTAL {game.player_totals[player]}"
+            _draw_scoreboard_text_fit(total, center_x, bottom + 0.15, z - 0.04,
+                                      (1.0, 0.82, 0.54), 1.65)
     glLineWidth(1.0)
     glPopMatrix()
     glEnable(GL_LIGHTING)
@@ -508,24 +621,33 @@ def _draw_guide_rails():
     glEnable(GL_LIGHTING)
 
 
-def _draw_ball(ball, ball_model):
-    _draw_contact_shadow(ball.x, ball.z, BALL_RADIUS * 1.8, BALL_RADIUS * 1.15, 0.35)
+def _draw_ball(ball, ball_model, draw_contact_shadow=True):
+    if draw_contact_shadow:
+        _draw_contact_shadow(ball.x, ball.z, BALL_RADIUS * 1.8, BALL_RADIUS * 1.15, 0.35)
     glPushMatrix()
     glTranslatef(ball.x, BALL_RADIUS, ball.z)
     ball_model.draw((0.12, 0.20, 0.8))
     glPopMatrix()
 
 
-def _draw_pins(pins, pin_model):
+def _draw_pins(pins, pin_model, draw_contact_shadows=True):
     for pin in pins:
         if pin.cleared:
             continue
-        _draw_contact_shadow(pin.x, pin.z, 0.16, 0.12, 0.26)
+        if draw_contact_shadows:
+            _draw_contact_shadow(pin.x, pin.z, 0.16, 0.12, 0.26)
         glPushMatrix()
         glTranslatef(pin.x, 0.0, pin.z)
         glRotatef(math.degrees(pin.tilt_z), 0, 0, 1)
         glRotatef(math.degrees(pin.tilt_x), 1, 0, 0)
+        # Keep the pin's white body and red bands readable under the alley's
+        # dark shadow maps. Pins still cast shadows in the depth pass, but
+        # their visible surface color is not multiplied by scene lighting.
+        restore_lighting = bool(glIsEnabled(GL_LIGHTING))
+        glDisable(GL_LIGHTING)
         pin_model.draw((0.92, 0.91, 0.84))
+        if restore_lighting:
+            glEnable(GL_LIGHTING)
         glPopMatrix()
 
 
@@ -541,6 +663,266 @@ def _draw_trajectory(points):
     glDisable(GL_LINE_STIPPLE)
     glEnable(GL_LIGHTING)
 
+
+def _look_at_matrix(eye, target, up):
+    eye = np.asarray(eye, dtype=float)
+    forward = np.asarray(target, dtype=float) - eye
+    forward /= np.linalg.norm(forward)
+    up = np.asarray(up, dtype=float)
+    side = np.cross(forward, up)
+    side /= np.linalg.norm(side)
+    corrected_up = np.cross(side, forward)
+    return np.array([
+        [side[0], side[1], side[2], -np.dot(side, eye)],
+        [corrected_up[0], corrected_up[1], corrected_up[2], -np.dot(corrected_up, eye)],
+        [-forward[0], -forward[1], -forward[2], np.dot(forward, eye)],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=float)
+
+
+def _perspective_matrix(fov_degrees, aspect, near, far):
+    f = 1.0 / math.tan(math.radians(fov_degrees) * 0.5)
+    return np.array([
+        [f / aspect, 0.0, 0.0, 0.0],
+        [0.0, f, 0.0, 0.0],
+        [0.0, 0.0, (far + near) / (near - far),
+         (2.0 * far * near) / (near - far)],
+        [0.0, 0.0, -1.0, 0.0],
+    ], dtype=float)
+
+
+def _orthographic_matrix(left, right, bottom, top, near, far):
+    return np.array([
+        [2.0 / (right - left), 0.0, 0.0, -(right + left) / (right - left)],
+        [0.0, 2.0 / (top - bottom), 0.0, -(top + bottom) / (top - bottom)],
+        [0.0, 0.0, -2.0 / (far - near), -(far + near) / (far - near)],
+        [0.0, 0.0, 0.0, 1.0],
+    ], dtype=float)
+
+
+def _ensure_shadow_resources():
+    global _shadow_attempted, _shadow_fbo, _shadow_texture, _static_shadow_texture
+    global _shadow_depth_program, _shadow_mask_program
+    if _shadow_attempted:
+        return bool(_shadow_fbo and _shadow_texture and _static_shadow_texture
+                    and _shadow_depth_program and _shadow_mask_program)
+    _shadow_attempted = True
+    shader_dir = Path(__file__).parent / "shaders"
+    try:
+        depth_vertex = (shader_dir / "shadow_depth.vert").read_text(encoding="utf-8-sig")
+        depth_fragment = (shader_dir / "shadow_depth.frag").read_text(encoding="utf-8-sig")
+        mask_vertex = (shader_dir / "shadow_mask.vert").read_text(encoding="utf-8-sig")
+        mask_fragment = (shader_dir / "shadow_mask.frag").read_text(encoding="utf-8-sig")
+        _shadow_depth_program = compileProgram(
+            compileShader(depth_vertex, GL_VERTEX_SHADER),
+            compileShader(depth_fragment, GL_FRAGMENT_SHADER))
+        _shadow_mask_program = compileProgram(
+            compileShader(mask_vertex, GL_VERTEX_SHADER),
+            compileShader(mask_fragment, GL_FRAGMENT_SHADER))
+        _shadow_texture = glGenTextures(1)
+        _static_shadow_texture = glGenTextures(1)
+        for texture in (_shadow_texture, _static_shadow_texture):
+            glBindTexture(GL_TEXTURE_2D, texture)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, _SHADOW_SIZE,
+                         _SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, None)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR,
+                             (1.0, 1.0, 1.0, 1.0))
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE)
+        _shadow_fbo = glGenFramebuffers(1)
+        glBindFramebuffer(GL_FRAMEBUFFER, _shadow_fbo)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, _static_shadow_texture, 0)
+        glDrawBuffer(GL_NONE)
+        glReadBuffer(GL_NONE)
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glDrawBuffer(GL_BACK)
+        glReadBuffer(GL_BACK)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError(f"shadow framebuffer incomplete: {status}")
+        return True
+    except Exception as exc:
+        try:
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+            glDrawBuffer(GL_BACK)
+            glReadBuffer(GL_BACK)
+            glBindTexture(GL_TEXTURE_2D, 0)
+        except Exception:
+            pass
+        _shadow_fbo = 0
+        print(f"Dynamic shadows unavailable; using bulb lighting only: {exc}")
+        return False
+
+def _draw_lane_shadow_geometry():
+    glBegin(GL_QUADS)
+    glVertex3f(-LANE_HALF_WIDTH, 0.0, LANE_START_Z)
+    glVertex3f(LANE_HALF_WIDTH, 0.0, LANE_START_Z)
+    glVertex3f(LANE_HALF_WIDTH, 0.0, PIN_DECK_Z + 2.0)
+    glVertex3f(-LANE_HALF_WIDTH, 0.0, PIN_DECK_Z + 2.0)
+    glEnd()
+
+
+def _draw_shadow_casters(game, ball_model, pin_model, room_model,
+                         draw_room=True, draw_objects=True,
+                         exclude_room_dynamic_tags=(), draw_pins=True):
+    if draw_room:
+        _draw_room(room_model, exclude_dynamic_tags=exclude_room_dynamic_tags)
+        if room_model is None:
+            _draw_lane_shadow_geometry()
+    if draw_objects:
+        if draw_pins:
+            _draw_pins(game.pins, pin_model, draw_contact_shadows=False)
+        _draw_ball(game.ball, ball_model, draw_contact_shadow=False)
+
+
+def _render_bulb_shadow(game, camera, ball_model, pin_model, room_model):
+    if not _ensure_shadow_resources():
+        return None
+    # Use a top-down orthographic shadow volume covering the entire alley.
+    # A perspective map from one ceiling bulb clipped the far third of the lane.
+    light_eye = (0.0, _SHADOW_LIGHT_HEIGHT, _SHADOW_LIGHT_CENTER_Z)
+    light_target = (0.0, 0.0, _SHADOW_LIGHT_CENTER_Z)
+    light_view = _look_at_matrix(light_eye, light_target, (0.0, 0.0, -1.0))
+    camera_view = _look_at_matrix(camera.position, camera.target, (0.0, 1.0, 0.0))
+    light_projection = _orthographic_matrix(*_SHADOW_ORTHO,
+                                            _SHADOW_NEAR, _SHADOW_FAR)
+    camera_to_light = light_projection @ light_view @ np.linalg.inv(camera_view)
+    viewport = np.asarray(glGetIntegerv(GL_VIEWPORT), dtype=int)
+
+    glBindFramebuffer(GL_FRAMEBUFFER, _shadow_fbo)
+    glViewport(0, 0, _SHADOW_SIZE, _SHADOW_SIZE)
+    glDrawBuffer(GL_NONE)
+    glReadBuffer(GL_NONE)
+    glClearDepth(1.0)
+    glClear(GL_DEPTH_BUFFER_BIT)
+    glEnable(GL_DEPTH_TEST)
+    glDepthFunc(GL_LESS)
+    glDepthMask(GL_TRUE)
+    glDisable(GL_BLEND)
+    glActiveTexture(GL_TEXTURE0)
+    glUseProgram(_shadow_depth_program)
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(*_SHADOW_ORTHO, _SHADOW_NEAR, _SHADOW_FAR)
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+    gluLookAt(light_eye[0], light_eye[1], light_eye[2],
+              light_target[0], light_target[1], light_target[2],
+              0.0, 0.0, -1.0)
+    # Save room geometry separately so it can shadow the pins and ball without
+    # letting the room mesh darken itself across its floors, walls, and ceiling.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, _static_shadow_texture, 0)
+    glClear(GL_DEPTH_BUFFER_BIT)
+    _draw_shadow_casters(game, ball_model, pin_model, room_model,
+                         draw_room=True, draw_objects=False,
+                         exclude_room_dynamic_tags=ROOM_TAGS_EXCLUDED_FROM_SHADOWS)
+
+    # Moving objects cast a second map that can safely shade the room and lane.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, _shadow_texture, 0)
+    glClear(GL_DEPTH_BUFFER_BIT)
+    _draw_shadow_casters(game, ball_model, pin_model, room_model,
+                         draw_room=False, draw_objects=True)
+    glUseProgram(0)
+    glPopMatrix()
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    glDrawBuffer(GL_BACK)
+    glReadBuffer(GL_BACK)
+    glViewport(int(viewport[0]), int(viewport[1]),
+               int(viewport[2]), int(viewport[3]))
+    glActiveTexture(GL_TEXTURE0)
+    return camera_to_light
+
+def _apply_one_shadow_map(game, texture, ball_model, pin_model, room_model,
+                          draw_room, draw_objects,
+                          exclude_room_dynamic_tags=(), receive_pins=True):
+    glActiveTexture(GL_TEXTURE1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    glActiveTexture(GL_TEXTURE0)
+    glDepthFunc(GL_LEQUAL)
+    glDepthMask(GL_FALSE)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA)
+    glDisable(GL_LIGHTING)
+    _draw_shadow_casters(game, ball_model, pin_model, room_model,
+                         draw_room=draw_room, draw_objects=draw_objects,
+                         exclude_room_dynamic_tags=exclude_room_dynamic_tags,
+                         draw_pins=receive_pins)
+    glEnable(GL_LIGHTING)
+    glDisable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glDepthMask(GL_TRUE)
+    glDepthFunc(GL_LESS)
+    glUseProgram(0)
+    glActiveTexture(GL_TEXTURE1)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glActiveTexture(GL_TEXTURE0)
+
+
+def _apply_bulb_shadows(game, camera_to_light, ball_model, pin_model, room_model):
+    if camera_to_light is None:
+        return
+    glUseProgram(_shadow_mask_program)
+    matrix_location = glGetUniformLocation(_shadow_mask_program, "uCameraToLight")
+    if matrix_location >= 0:
+        glUniformMatrix4fv(matrix_location, 1, GL_TRUE,
+                           np.asarray(camera_to_light, dtype=np.float32))
+    sampler_location = glGetUniformLocation(_shadow_mask_program, "uShadowMap")
+    if sampler_location >= 0:
+        glUniform1i(sampler_location, 1)
+    texel_location = glGetUniformLocation(_shadow_mask_program, "uShadowTexel")
+    if texel_location >= 0:
+        glUniform2f(texel_location, 1.0 / _SHADOW_SIZE, 1.0 / _SHADOW_SIZE)
+
+    # Let the room's tables, chairs, holders, and other static geometry shadow
+    # gameplay objects, then let gameplay objects shadow the static room too.
+    _apply_one_shadow_map(game, _static_shadow_texture, ball_model, pin_model,
+                          room_model, draw_room=False, draw_objects=True,
+                          receive_pins=False)
+    if room_model is not None:
+        # The imported room is a combined mesh. A depth-biased receiver pass
+        # suppresses each surface's own shadow while preserving shadows from
+        # higher objects such as tables, chairs, and ball holders.
+        glUseProgram(_shadow_mask_program)
+        matrix_location = glGetUniformLocation(_shadow_mask_program, "uCameraToLight")
+        if matrix_location >= 0:
+            glUniformMatrix4fv(matrix_location, 1, GL_TRUE,
+                               np.asarray(camera_to_light, dtype=np.float32))
+        sampler_location = glGetUniformLocation(_shadow_mask_program, "uShadowMap")
+        if sampler_location >= 0:
+            glUniform1i(sampler_location, 1)
+        texel_location = glGetUniformLocation(_shadow_mask_program, "uShadowTexel")
+        if texel_location >= 0:
+            glUniform2f(texel_location, 1.0 / _SHADOW_SIZE, 1.0 / _SHADOW_SIZE)
+        _apply_one_shadow_map(game, _static_shadow_texture, ball_model, pin_model,
+                              room_model, draw_room=True, draw_objects=False,
+                              exclude_room_dynamic_tags=ROOM_TAGS_EXCLUDED_FROM_SHADOWS)
+    glUseProgram(_shadow_mask_program)
+    matrix_location = glGetUniformLocation(_shadow_mask_program, "uCameraToLight")
+    if matrix_location >= 0:
+        glUniformMatrix4fv(matrix_location, 1, GL_TRUE,
+                           np.asarray(camera_to_light, dtype=np.float32))
+    sampler_location = glGetUniformLocation(_shadow_mask_program, "uShadowMap")
+    if sampler_location >= 0:
+        glUniform1i(sampler_location, 1)
+    texel_location = glGetUniformLocation(_shadow_mask_program, "uShadowTexel")
+    if texel_location >= 0:
+        glUniform2f(texel_location, 1.0 / _SHADOW_SIZE, 1.0 / _SHADOW_SIZE)
+    _apply_one_shadow_map(game, _shadow_texture, ball_model, pin_model,
+                          room_model, draw_room=True, draw_objects=True,
+                          receive_pins=False,
+                          exclude_room_dynamic_tags=ROOM_TAGS_EXCLUDED_FROM_SHADOWS)
 
 def _measure_fps():
     global _fps_started, _fps_frames, _fps_value
@@ -589,17 +971,17 @@ def _draw_hud(game, camera, fps):
         frame = 1
     if game.player_count == 2:
         score_text = (f"P1 {game.player_totals[0]}  |  P2 {game.player_totals[1]}  |  "
-                      f"PINS {game.standing_pins}/10  |  AIM {math.degrees(game.aim):+.0f} deg  |  "
+                      f"PINS {game.standing_pins}/10  |  AIM {math.degrees(game.aim):+.1f} deg  |  "
                       f"POWER {game.power:.1f}  |  FPS {fps:.0f}")
     else:
         score_text = (f"SCORE {card.total_score}  |  PINS {game.standing_pins}/10  |  "
-                      f"AIM {math.degrees(game.aim):+.0f} deg  |  POWER {game.power:.1f}  |  "
+                      f"AIM {math.degrees(game.aim):+.1f} deg  |  POWER {game.power:.1f}  |  "
                       f"FPS {fps:.0f}")
     lines = [f"{game.player_count}P  |  TURN {game.turn_number}/{total_turns}  |  PLAYER {game.current_player + 1}  |  FRAME {frame}  |  {state.upper()}  |  CAMERA {camera.mode.upper()}",
              score_text,
              game.message,
-             "ARROWS aim / power    A,D position    LEFT DRAG aim & power, release to throw",
-             f"RIGHT DRAG look    SPACE throw / next roll    C camera    R reset    ESC title"]
+             "ARROWS aim 0.1 deg / power    A,D position    LEFT DRAG aim & power, release to throw",
+             "RIGHT DRAG look    SPACE throw / next roll    C cycle    1 follow 2 fixed 3 result 4 board    R reset    ESC title"]
     colors = ((0.46, 0.98, 0.86), (1.0, 0.90, 0.62), (0.98, 0.98, 1.0),
               (0.78, 0.86, 0.91), (0.78, 0.86, 0.91))
     for row, line in enumerate(lines):
@@ -713,8 +1095,11 @@ def draw_scene(game, camera, ball_model, pin_model, room_model=None):
     glLoadIdentity()
     gluLookAt(*camera.position, *camera.target, 0, 1, 0)
     # Fixed-function light positions are transformed by the active view matrix.
-    for index, position in enumerate(_ROOM_LIGHT_POSITIONS):
+    for index, position in enumerate(BULB_LIGHT_POSITIONS):
         glLightfv(GL_LIGHT0 + index, GL_POSITION, position)
+    if room_model is not None:
+        _update_graffiti_lights()
+    shadow_matrix = _render_bulb_shadow(game, camera, ball_model, pin_model, room_model)
     _draw_room(room_model)
     if room_model is None:
         _draw_alley_decorations(ball_model)
@@ -724,6 +1109,9 @@ def draw_scene(game, camera, ball_model, pin_model, room_model=None):
             _draw_guide_rails()
         _draw_pins(game.pins, pin_model)
         _draw_ball(game.ball, ball_model)
+        _apply_bulb_shadows(game, shadow_matrix, ball_model, pin_model, room_model)
+        if room_model is not None:
+            _draw_graffiti_lane_spill()
         _draw_title_menu(game)
         glutSwapBuffers()
         return
@@ -735,10 +1123,23 @@ def draw_scene(game, camera, ball_model, pin_model, room_model=None):
         _draw_scoreboard(game, compact=True)
     _draw_pins(game.pins, pin_model)
     _draw_ball(game.ball, ball_model)
+    _apply_bulb_shadows(game, shadow_matrix, ball_model, pin_model, room_model)
+    if room_model is not None:
+        _draw_graffiti_lane_spill()
     if game.phase == "aiming":
         _draw_trajectory(game.trajectory())
     _draw_hud(game, camera, fps)
     glutSwapBuffers()
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -4,6 +4,7 @@ import math
 
 from config import (
     BALL_PIN_IMPULSE,
+    BALL_IMPULSE_REFERENCE_SPEED,
     BALL_RADIUS,
     BALL_START_Z,
     BALL_STOP_Z,
@@ -27,6 +28,13 @@ from config import (
     PIN_UPRIGHT_STIFFNESS,
     RESET_ZONE_Z,
 )
+
+_PIN_LINEAR_IMPULSE_FACTOR = 0.28
+_PIN_ANGULAR_IMPULSE_FACTOR = 3.8
+_HEAD_PIN_CENTER_HIT_BOOST = 0.2
+_PIN_CHAIN_TRANSFER_SCALE = 0.28
+_PIN_CHAIN_TRANSFER_CAP = 1.0
+_PIN_CHAIN_ANGULAR_FACTOR = 3.0
 
 
 def predict_trajectory(aim_angle: float, speed: float, start_x: float = 0.0,
@@ -148,12 +156,18 @@ def _advance_guide(ball, dt):
         ball.vx = ball.vz = 0.0
 
 
-def _apply_pin_impulse(pin, nx, nz, impulse):
-    pin.vx += nx * impulse
-    pin.vz += nz * impulse
+def _apply_pin_impulse(pin, nx, nz, impulse,
+                       angular_factor=_PIN_ANGULAR_IMPULSE_FACTOR):
+    # Pins have a broad base and a high center of mass: a collision should
+    # mostly tip them, not make them skate across the lane while upright.
+    linear_impulse = impulse * _PIN_LINEAR_IMPULSE_FACTOR
+    pin.vx += nx * linear_impulse
+    pin.vz += nz * linear_impulse
     # A forward push tips the pin forward around X; a side push tips around Z.
-    pin.omega_x += nz * impulse * 0.85
-    pin.omega_z -= nx * impulse * 0.85
+    angular_impulse = (impulse * angular_factor
+                       * getattr(pin, "roll_angular_scale", 1.0))
+    pin.omega_x += nz * angular_impulse
+    pin.omega_z -= nx * angular_impulse
 
 
 def _hit_pins_with_ball(ball, pins, ax, az, bx, bz):
@@ -164,7 +178,11 @@ def _hit_pins_with_ball(ball, pins, ax, az, bx, bz):
         if pin.cleared or pin.ball_contacted:
             continue
         distance, cx, cz = _point_segment_distance(pin.x, pin.z, ax, az, bx, bz)
-        if distance > BALL_RADIUS + PIN_RADIUS:
+        # Keep the swept collision radius close to the rendered ball radius.
+        # Adding the full pin radius makes one path apply a full-speed hit to
+        # too many adjacent pins at once, especially with this compact rack.
+        contact_radius = BALL_RADIUS * 0.94
+        if distance > contact_radius:
             continue
         dx, dz = pin.x - cx, pin.z - cz
         magnitude = math.hypot(dx, dz)
@@ -172,7 +190,24 @@ def _hit_pins_with_ball(ball, pins, ax, az, bx, bz):
             nx, nz = ball.vx / speed, ball.vz / speed
         else:
             nx, nz = dx / magnitude, dz / magnitude
-        _apply_pin_impulse(pin, nx, nz, speed * BALL_PIN_IMPULSE)
+        bias = getattr(pin, "roll_contact_bias", 0.0)
+        if bias:
+            cosine, sine = math.cos(bias), math.sin(bias)
+            nx, nz = nx * cosine - nz * sine, nx * sine + nz * cosine
+        # Scale impact sublinearly around the usual 8-unit throw speed so max
+        # power is stronger, but does not turn every straight shot into a
+        # guaranteed strike.
+        impulse = (BALL_PIN_IMPULSE * BALL_IMPULSE_REFERENCE_SPEED
+                   * math.sqrt(speed / BALL_IMPULSE_REFERENCE_SPEED))
+        angular_factor = _PIN_ANGULAR_IMPULSE_FACTOR
+        if pin.pin_id == 1:
+            # A centered hit on the lead pin needs to topple it before the
+            # rear pins can steal its motion through the 2D pair solver.
+            # Ease the boost for off-center contact so grazes remain glancing.
+            center_alignment = max(
+                0.0, 1.0 - abs(dx) / max(BALL_RADIUS + PIN_RADIUS, 1e-6))
+            angular_factor += _HEAD_PIN_CENTER_HIT_BOOST * center_alignment
+        _apply_pin_impulse(pin, nx, nz, impulse, angular_factor)
         pin.ball_contacted = True
 
 
@@ -188,13 +223,13 @@ def _resolve_pin_pairs(pins):
                 continue
             dx, dz = b.x - a.x, b.z - a.z
             distance = math.hypot(dx, dz)
-            # The pin model is tall but this arcade physics keeps pin origins
-            # on the floor. Give a tipping pin a wider contact footprint so
-            # its falling body can hit its neighbors in the top-down solver.
+            # Approximate the swept body of a falling pin. Its top reaches
+            # neighboring bases, while upright pins still use base-to-base
+            # contact so the rack does not explode from broad overlaps.
             if a.down and b.down:
-                min_distance = PIN_RADIUS * 5.0
+                min_distance = PIN_RADIUS * 3.0
             elif a.down or b.down:
-                min_distance = PIN_RADIUS * 4.0
+                min_distance = PIN_RADIUS * 3.0
             else:
                 min_distance = PIN_RADIUS * 2.0
             if distance >= min_distance:
@@ -204,10 +239,31 @@ def _resolve_pin_pairs(pins):
             else:
                 nx, nz = dx / distance, dz / distance
             overlap = min_distance - distance
-            a.x -= nx * overlap * 0.5
-            a.z -= nz * overlap * 0.5
-            b.x += nx * overlap * 0.5
-            b.z += nz * overlap * 0.5
+            if not a.down and not b.down:
+                a.x -= nx * overlap * 0.5
+                a.z -= nz * overlap * 0.5
+                b.x += nx * overlap * 0.5
+                b.z += nz * overlap * 0.5
+
+            # Transfer the falling pin's angular motion into its neighbor in
+            # the direction its body is tipping. This gives the rack a visible
+            # chain reaction without giving every pin a large skating impulse.
+            if a.down != b.down:
+                falling, target = (a, b) if a.down else (b, a)
+                target_is_a = target is a
+                tx, tz = (-nx, -nz) if target_is_a else (nx, nz)
+                tip_x = -math.sin(falling.tilt_z)
+                tip_z = math.sin(falling.tilt_x)
+                tip_length = math.hypot(tip_x, tip_z)
+                if tip_length > 1e-6 and target.pin_id not in falling.pin_contacts:
+                    toward = (tip_x * tx + tip_z * tz) / tip_length
+                    if toward > 0.30:
+                        fall_speed = math.hypot(falling.omega_x, falling.omega_z)
+                        transfer = min(_PIN_CHAIN_TRANSFER_CAP,
+                                       fall_speed * _PIN_CHAIN_TRANSFER_SCALE) * toward
+                        _apply_pin_impulse(target, tx, tz, transfer,
+                                           angular_factor=_PIN_CHAIN_ANGULAR_FACTOR)
+                        falling.pin_contacts.add(target.pin_id)
 
             relative_speed = (b.vx - a.vx) * nx + (b.vz - a.vz) * nz
             if relative_speed >= 0:
@@ -217,8 +273,8 @@ def _resolve_pin_pairs(pins):
             a.vz -= impulse * nz
             b.vx += impulse * nx
             b.vz += impulse * nz
-            _apply_pin_impulse(a, -nx, -nz, impulse * 1.4)
-            _apply_pin_impulse(b, nx, nz, impulse * 1.4)
+            _apply_pin_impulse(a, -nx, -nz, impulse)
+            _apply_pin_impulse(b, nx, nz, impulse)
 
 
 def _step_pins(pins, dt):
@@ -264,18 +320,17 @@ def _mark_out_of_bounds_pins(pins):
             continue
         if pin.x > PIN_FALL_X_LIMIT:
             pin.down = True
-            pin.tilt_z = -PIN_MAX_TILT  # top points outside the right rail
+            pin.omega_z = min(pin.omega_z, -4.0)  # tip beyond the right rail
         elif pin.x < -PIN_FALL_X_LIMIT:
             pin.down = True
-            pin.tilt_z = PIN_MAX_TILT   # top points outside the left rail
+            pin.omega_z = max(pin.omega_z, 4.0)   # tip beyond the left rail
         elif pin.z > PIN_FALL_MAX_Z:
             pin.down = True
-            pin.tilt_x = PIN_MAX_TILT   # top passes the far reset line
+            pin.omega_x = max(pin.omega_x, 4.0)  # tip beyond the far reset line
         elif pin.z < PIN_FALL_MIN_Z:
             pin.down = True
-            pin.tilt_x = -PIN_MAX_TILT  # top passes the foul-line side
+            pin.omega_x = min(pin.omega_x, -4.0) # tip past the foul line
         if pin.down:
-            pin.omega_x = pin.omega_z = 0.0
             pin.vx *= 0.35
             pin.vz *= 0.35
 

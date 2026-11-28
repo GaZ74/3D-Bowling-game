@@ -72,7 +72,7 @@ class Scorecard:
         return self.last_event
 
     def frame_symbol(self, frame_index: int) -> str:
-        """Return compact roll marks for a score-board frame cell."""
+        """Return roll marks separated by slashes for a score-board cell."""
         if not 0 <= frame_index < 10:
             return ""
         frame = self.frames[frame_index]
@@ -84,25 +84,17 @@ class Scorecard:
                 return "X"
             if len(frame) == 1:
                 return symbol(frame[0])
-            if sum(frame[:2]) == 10:
-                return symbol(frame[0]) + "/"
-            return symbol(frame[0]) + symbol(frame[1])
+            return f"{symbol(frame[0])}/{symbol(frame[1])}"
 
         first = frame[0]
         result = "X" if first == 10 else symbol(first)
         if len(frame) == 1:
             return result
         second = frame[1]
-        if first == 10:
-            result += "X" if second == 10 else symbol(second)
-        else:
-            result += "/" if first + second == 10 else symbol(second)
+        result += "/" + ("X" if first == 10 and second == 10 else symbol(second))
         if len(frame) == 3:
             third = frame[2]
-            if first == 10 and second < 10 and second + third == 10:
-                result += "/"
-            else:
-                result += "X" if third == 10 else symbol(third)
+            result += "/" + ("X" if third == 10 else symbol(third))
         return result
 
     @property

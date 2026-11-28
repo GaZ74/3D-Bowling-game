@@ -9,9 +9,10 @@ from OpenGL.GLUT import *
 
 from camera import Camera
 from config import (BALL_SPEED_MAX, BALL_SPEED_MIN, MAX_AIM_ANGLE, WINDOW_HEIGHT,
-                    USE_CLUB_ROOM_MODEL, WINDOW_TITLE, WINDOW_WIDTH)
+                    CAMERA_MODES, USE_CLUB_ROOM_MODEL, WINDOW_TITLE, WINDOW_WIDTH)
 from game import BowlingGame
-from renderer import draw_scene
+from renderer import (BULB_LIGHT_POSITIONS, GRAFFITI_LIGHT_POSITIONS,
+                      draw_scene)
 
 from model_loader import Model
 
@@ -90,6 +91,8 @@ def keyboard(key, _x, _y):
         game.next_roll()
     elif key == "c":
         camera.cycle_mode()
+    elif key in ("1", "2", "3", "4"):
+        camera.set_mode(CAMERA_MODES[int(key) - 1])
     elif key == "r":
         game.reset_frame()
     elif key == "a":
@@ -157,18 +160,29 @@ def main():
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_NORMALIZE)
     glEnable(GL_LIGHTING)
-    light_positions = [(-3.2, 3.35, -8.0, 1.0),
-                       (3.2, 3.35, 1.0, 1.0),
-                       (-3.2, 3.35, 11.0, 1.0),
-                       (3.2, 3.35, 21.0, 1.0)]
+    light_positions = BULB_LIGHT_POSITIONS
     for index, position in enumerate(light_positions):
         light = GL_LIGHT0 + index
         glEnable(light)
         glLightfv(light, GL_POSITION, position)
-        glLightfv(light, GL_DIFFUSE, (0.95, 0.91, 0.78, 1.0))
-        glLightfv(light, GL_AMBIENT, (0.12, 0.12, 0.12, 1.0))
+        glLightfv(light, GL_DIFFUSE, (0.46, 0.43, 0.36, 1.0))
+        glLightfv(light, GL_AMBIENT, (0.035, 0.035, 0.035, 1.0))
         glLightf(light, GL_CONSTANT_ATTENUATION, 0.8)
         glLightf(light, GL_LINEAR_ATTENUATION, 0.025)
+    if room_model is not None:
+        graffiti_light_start = GL_LIGHT0 + len(light_positions)
+        for index, position in enumerate(GRAFFITI_LIGHT_POSITIONS):
+            light = graffiti_light_start + index
+            glEnable(light)
+            glLightfv(light, GL_POSITION, position)
+            glLightfv(light, GL_DIFFUSE, (0.3, 0.3, 0.3, 1.0))
+            glLightfv(light, GL_AMBIENT, (0.0, 0.0, 0.0, 1.0))
+            glLightfv(light, GL_SPECULAR, (0.0, 0.0, 0.0, 1.0))
+            glLightf(light, GL_CONSTANT_ATTENUATION, 1.0)
+            glLightf(light, GL_LINEAR_ATTENUATION, 0.02)
+            glLightf(light, GL_QUADRATIC_ATTENUATION, 0.001)
+            glLightf(light, GL_SPOT_CUTOFF, 78.0)
+            glLightf(light, GL_SPOT_EXPONENT, 5.0)
     glEnable(GL_COLOR_MATERIAL)
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.28, 0.28, 0.28, 1.0))
